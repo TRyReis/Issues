@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PC-Wake">
+  <title>PC-Wake</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>PC-Wake</h1>
+    <button id="btn-settings" class="icon-btn" aria-label="Einstellungen">⚙</button>
+  </header>
+
+  <!-- Login -->
+  <section id="view-login" class="view hidden">
+    <div class="card">
+      <h2>Verbinden</h2>
+      <p class="muted">Gib das Zugangs-Token ein, das der Server beim ersten Start angezeigt hat
+        (steht auch in <code>config.json</code>).</p>
+      <label>Token
+        <input id="in-token" type="password" autocomplete="current-password">
+      </label>
+      <button id="btn-login" class="primary">Speichern &amp; verbinden</button>
+      <p id="login-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- Hauptansicht -->
+  <section id="view-main" class="view hidden">
+    <nav class="tabs">
+      <button data-tab="devices" class="active">Geräte</button>
+      <button data-tab="schedules">Autostart</button>
+    </nav>
+
+    <div id="tab-devices">
+      <div id="device-list"></div>
+      <p class="muted small" id="server-time"></p>
+    </div>
+
+    <div id="tab-schedules" class="hidden">
+      <div id="schedule-list"></div>
+      <button id="btn-add-schedule" class="primary wide">+ Neuer Autostart</button>
+    </div>
+  </section>
+
+  <!-- Dialog: Zeitplan -->
+  <dialog id="dlg-schedule">
+    <form id="form-schedule" method="dialog">
+      <h2 id="dlg-title">Autostart</h2>
+      <label>Bezeichnung
+        <input name="label" maxlength="60" placeholder="z.B. Feierabend">
+      </label>
+      <label>Gerät
+        <select name="device" id="sel-device"></select>
+      </label>
+      <label>Uhrzeit
+        <input name="time" type="time" required>
+      </label>
+      <fieldset class="days">
+        <legend>Wochentage</legend>
+        <div id="day-buttons"></div>
+        <div class="presets">
+          <button type="button" data-preset="0,1,2,3,4">Mo–Fr</button>
+          <button type="button" data-preset="5,6">Wochenende</button>
+          <button type="button" data-preset="0,1,2,3,4,5,6">Täglich</button>
+        </div>
+      </fieldset>
+      <p id="schedule-error" class="error"></p>
+      <div class="dlg-actions">
+        <button type="button" id="btn-delete-schedule" class="danger">Löschen</button>
+        <span class="spacer"></span>
+        <button type="button" id="btn-cancel">Abbrechen</button>
+        <button type="submit" class="primary">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

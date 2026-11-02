@@ -1,0 +1,14 @@
+{
+  "token": "HIER-EIN-LANGES-GEHEIMES-TOKEN-EINTRAGEN",
+  "listen": "0.0.0.0",
+  "port": 8080,
+  "timezone": "Europe/Berlin",
+  "devices": [
+    {
+      "name": "Gaming-PC",
+      "mac": "AA:BB:CC:DD:EE:FF",
+      "ip": "192.168.178.50",
+      "broadcast": "192.168.178.255"
+    }
+  ]
+}

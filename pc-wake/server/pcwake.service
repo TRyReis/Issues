@@ -1,0 +1,19 @@
+# systemd-Dienst: startet PC-Wake automatisch beim Booten des Raspberry Pi.
+# Installation:
+#   sudo cp pcwake.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pcwake
+# Pfade/Benutzer unten ggf. anpassen.
+[Unit]
+Description=PC-Wake (Wake-on-LAN Relay + Zeitplaner)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/pc-wake/server
+ExecStart=/usr/bin/python3 /home/pi/pc-wake/server/pcwake_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
