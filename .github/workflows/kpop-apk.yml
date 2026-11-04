@@ -54,6 +54,27 @@ jobs:
           path: KPop-Release-Radar.apk
 
       - name: Als Release veröffentlichen
+        id: release
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: kpop-radar-latest
+          target_commitish: ${{ github.sha }}
+          name: K-Pop Release Radar (Android-APK)
+          body: |
+            Neueste Version der K-Pop Release Radar App.
+            **KPop-Release-Radar.apk** auf dem Handy herunterladen und öffnen
+            (ggf. „Installation aus unbekannten Quellen“ erlauben).
+          files: KPop-Release-Radar.apk
+          overwrite_files: true
+
+      # GitHub lehnt das Ersetzen der Datei gelegentlich kurz ab → einmal nach Pause wiederholen
+      - name: Kurz warten (nur bei Fehler)
+        if: steps.release.outcome == 'failure'
+        run: sleep 30
+
+      - name: Als Release veröffentlichen (2. Versuch)
+        if: steps.release.outcome == 'failure'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: kpop-radar-latest
