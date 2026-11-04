@@ -18,3 +18,16 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 dem Tag „k-pop“ sowie alle Releases der Gruppen aus „Meine Gruppen“.
 Hinweis: Angekündigte Releases erscheinen nur, wenn sie bereits von der
 Community in MusicBrainz eingetragen wurden.
+
+## Konzerte in Deutschland (Tab „Konzerte“)
+- Alle angekündigten K-Pop-Konzerte/-Events in Deutschland ab heute, nach Monat gruppiert
+- Datum, Uhrzeit, Stadt, Halle, Status (abgesagt/verschoben), Vorverkaufsstart und Ticket-Link
+- Gesucht wird nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
+
+**Einmalig nötig:** ein kostenloser Ticketmaster API-Key.
+1. Auf https://developer-acct.ticketmaster.com/user/register registrieren
+2. Unter „My Apps“ den **Consumer Key** kopieren
+3. In der App im Tab „Konzerte“ unter „Ticketmaster API-Key“ einfügen
+
+Hinweis: Konzerte, die nur über andere Anbieter (z. B. Eventim) verkauft werden,
+können fehlen.

@@ -32,6 +32,21 @@
     border-radius: 999px; padding: 7px 14px; font: inherit; cursor: pointer; }
   .chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tabs { display: flex; gap: 6px; margin: 16px 0 4px; border-bottom: 1px solid var(--line); }
+  .tab { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none;
+         padding: 10px 12px; font-weight: 600; color: var(--muted); }
+  .tab[aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); }
+  [hidden] { display: none !important; }
+  .keybox { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .keybox input { flex: 1 1 240px; min-width: 0; background: var(--card); color: var(--text);
+                  border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: inherit; }
+  .gig { cursor: default; }
+  .gig .datebox { width: 64px; flex: none; text-align: center; border-radius: 10px;
+                  background: var(--accent-soft); color: var(--accent); padding: 8px 0; line-height: 1.15; }
+  .gig .datebox b { display: block; font-size: 24px; }
+  .gig .datebox small { font-size: 12px; text-transform: uppercase; }
+  .badge.warn { background: #fff3cd; color: #8a6100; }
+  .month { font-size: 14px; color: var(--muted); margin: 18px 0 8px; text-transform: capitalize; }
   h2 { font-size: 18px; margin: 28px 0 10px; display: flex; gap: 8px; align-items: baseline; }
   h2 .count { color: var(--muted); font-weight: 400; font-size: 14px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
@@ -62,6 +77,11 @@
   <p class="sub" id="range"></p>
 </header>
 <main>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="releases">🎵 Releases</button>
+    <button class="tab" role="tab" data-tab="concerts">🎫 Konzerte in Deutschland</button>
+  </nav>
+  <div id="tab-releases">
   <div class="toolbar">
     <input type="search" id="q" placeholder="Gruppe oder Titel filtern …" aria-label="Filter">
     <span id="types"></span>
@@ -93,6 +113,32 @@
     Angekündigte Releases erscheinen hier nur, wenn sie bereits in MusicBrainz eingetragen sind.
     Karte antippen für die Tracklist.
   </footer>
+  </div>
+
+  <div id="tab-concerts" hidden>
+    <div class="toolbar">
+      <input type="search" id="cq" placeholder="Gruppe, Stadt oder Halle filtern …" aria-label="Konzerte filtern">
+      <button id="creload" class="primary">↻ Aktualisieren</button>
+    </div>
+    <details id="keyDetails">
+      <summary>Ticketmaster API-Key</summary>
+      <p class="sub">Für die Konzertdaten wird ein kostenloser Key benötigt:
+        auf <a href="https://developer-acct.ticketmaster.com/user/register" target="_blank" rel="noopener">developer.ticketmaster.com</a>
+        registrieren → „My Apps“ → <b>Consumer Key</b> kopieren und hier einfügen. Der Key bleibt nur in diesem Browser gespeichert.</p>
+      <div class="keybox">
+        <input id="tmKey" type="text" placeholder="Consumer Key" autocomplete="off" spellcheck="false">
+        <button id="saveKey" class="primary">Speichern &amp; laden</button>
+      </div>
+    </details>
+    <div class="status" id="cstatus"></div>
+    <div id="concerts"></div>
+    <footer>
+      Daten: <a href="https://developer.ticketmaster.com" target="_blank" rel="noopener">Ticketmaster</a>.
+      Gesucht wird nach „K-Pop“ sowie nach allen Gruppen aus „Meine Gruppen“ (Tab Releases).
+      Konzerte, die ausschließlich über andere Anbieter (z. B. Eventim) verkauft werden, fehlen hier evtl. –
+      im Zweifel auf der Seite des Veranstalters gegenzuchecken.
+    </footer>
+  </div>
 </main>
 
 <script>
@@ -290,6 +336,150 @@ $('saveGroups').onclick = () => {
   store.set('kpop.groups', groups); showGroups(); load();
 };
 $('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); showGroups(); };
+
+// ================= Konzerte in Deutschland (Ticketmaster) =================
+const TM = 'https://app.ticketmaster.com/discovery/v2/events.json';
+let tmKey = store.get('kpop.tmKey', '');
+let concerts = [];
+let tmLast = 0;
+
+async function tm(params) {
+  const wait = tmLast + 250 - Date.now();           // max. 5 Anfragen/Sekunde
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  tmLast = Date.now();
+  const qs = new URLSearchParams({
+    apikey: tmKey, countryCode: 'DE', size: '200', sort: 'date,asc', locale: '*',
+    startDateTime: today.toISOString().replace(/\.\d+Z$/, 'Z'), ...params });
+  const res = await fetch(`${TM}?${qs}`);
+  if (res.status === 401) throw new Error('API-Key ungültig');
+  if (res.status === 429) { await new Promise(r => setTimeout(r, 1500)); return tm(params); }
+  if (!res.ok) throw new Error(`Ticketmaster HTTP ${res.status}`);
+  const data = await res.json();
+  return data._embedded?.events || [];
+}
+
+const wordRe = name => new RegExp(`(^|[^\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu');
+
+function toConcert(e, artistHint) {
+  const v = e._embedded?.venues?.[0] || {};
+  const img = (e.images || []).filter(i => i.ratio === '16_9').sort((a, b) => a.width - b.width)[0];
+  const local = e.dates?.start?.localDate;
+  if (!local) return null;
+  return {
+    id: e.id, name: e.name, url: e.url,
+    artists: (e._embedded?.attractions || []).map(a => a.name),
+    artistHint,
+    date: new Date(local + 'T00:00:00'),
+    time: e.dates.start.noSpecificTime ? '' : (e.dates.start.localTime || '').slice(0, 5),
+    status: e.dates?.status?.code || '',
+    venue: v.name || '', city: v.city?.name || '',
+    image: img?.url || '',
+    onsale: e.sales?.public?.startDateTime || ''
+  };
+}
+
+async function loadConcerts() {
+  if (!tmKey) {
+    $('cstatus').textContent = 'Bitte zuerst einen Ticketmaster API-Key eintragen (siehe oben).';
+    $('keyDetails').open = true; $('concerts').innerHTML = ''; return;
+  }
+  $('creload').disabled = true;
+  const found = new Map();
+  try {
+    // 1) Allgemeine K-Pop-Suche
+    for (const params of [{ classificationName: 'K-Pop' }, { keyword: 'K-Pop' }, { keyword: 'KPOP' }]) {
+      $('cstatus').textContent = 'Suche K-Pop-Events …';
+      for (const e of await tm(params)) { const c = toConcert(e); if (c) found.set(c.id, c); }
+      renderConcerts(found);
+    }
+    // 2) Jede Gruppe aus „Meine Gruppen“
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i], re = wordRe(g);
+      $('cstatus').textContent = `Suche Konzerte: ${g} (${i + 1}/${groups.length}) …`;
+      for (const e of await tm({ keyword: g, classificationName: 'Music' })) {
+        const c = toConcert(e, g);
+        // nur echte Treffer (z. B. „IVE“ nicht in „Live“)
+        if (c && (c.artists.some(a => re.test(a)) || re.test(c.name))) found.set(c.id, c);
+      }
+      renderConcerts(found);
+    }
+    $('cstatus').textContent = `${found.size} Konzerte/Events in Deutschland gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}`;
+    store.set('kpop.ccache', { at: Date.now(), list: [...found.values()] });
+  } catch (e) {
+    $('cstatus').innerHTML = `<span class="err">Fehler: ${e.message}</span>`;
+    if (/Key/.test(e.message)) $('keyDetails').open = true;
+  } finally { $('creload').disabled = false; }
+}
+
+function renderConcerts(map) {
+  concerts = [...map.values()].filter(c => c.date >= today).sort((a, b) => a.date - b.date || a.time.localeCompare(b.time));
+  const q = $('cq').value.trim().toLowerCase();
+  const list = concerts.filter(c => !q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q));
+  const box = $('concerts'); box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="empty">Keine angekündigten Konzerte gefunden.</div>'; return; }
+  let month = '', grid;
+  for (const c of list) {
+    const m = c.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+    if (m !== month) {
+      month = m;
+      const h = document.createElement('div'); h.className = 'month'; h.textContent = m; box.appendChild(h);
+      grid = document.createElement('div'); grid.className = 'grid'; box.appendChild(grid);
+    }
+    grid.appendChild(gigCard(c));
+  }
+}
+
+const STATUS = { cancelled: ['Abgesagt', 'warn'], postponed: ['Verschoben', 'warn'], rescheduled: ['Neuer Termin', 'warn'], offsale: ['Kein Verkauf', 'warn'] };
+
+function gigCard(c) {
+  const el = document.createElement('div'); el.className = 'card gig';
+  el.innerHTML = `
+    <div class="datebox"><small></small><b></b><small></small></div>
+    <div class="info">
+      <div class="title"></div><div class="artist"></div>
+      <div class="meta"></div>
+    </div>`;
+  const [wd, day, mon] = el.querySelectorAll('.datebox > *');
+  wd.textContent = c.date.toLocaleDateString('de-DE', { weekday: 'short' });
+  day.textContent = c.date.getDate();
+  mon.textContent = c.date.toLocaleDateString('de-DE', { month: 'short' });
+  el.querySelector('.title').textContent = c.name; el.querySelector('.title').title = c.name;
+  el.querySelector('.artist').textContent = `📍 ${[c.city, c.venue].filter(Boolean).join(' · ')}`;
+  const meta = el.querySelector('.meta');
+  const badge = (t, cls = '') => { const b = document.createElement('span'); b.className = 'badge ' + cls; b.textContent = t; meta.appendChild(b); };
+  if (c.time) badge(`${c.time} Uhr`);
+  badge(relDays(c.date), 'soon');
+  if (STATUS[c.status]) badge(...STATUS[c.status]);
+  else if (c.onsale && new Date(c.onsale) > new Date())
+    badge(`VVK ab ${new Date(c.onsale).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}`, 'warn');
+  if (c.url) {
+    const a = document.createElement('a'); a.href = c.url; a.target = '_blank'; a.rel = 'noopener';
+    a.className = 'badge'; a.textContent = 'Tickets ↗'; meta.appendChild(a);
+  }
+  return el;
+}
+
+$('cq').oninput = () => renderConcerts(new Map(concerts.map(c => [c.id, c])));
+$('creload').onclick = loadConcerts;
+$('tmKey').value = tmKey;
+$('saveKey').onclick = () => { tmKey = $('tmKey').value.trim(); store.set('kpop.tmKey', tmKey); $('keyDetails').open = false; loadConcerts(); };
+
+// --- Tabs ---
+let concertsLoaded = false;
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
+  $('tab-releases').hidden = name !== 'releases';
+  $('tab-concerts').hidden = name !== 'concerts';
+  store.set('kpop.tab', name);
+  if (name === 'concerts' && !concertsLoaded) {
+    concertsLoaded = true;
+    const cc = store.get('kpop.ccache', null);
+    if (cc && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(cc.list.map(c => [c.id, { ...c, date: new Date(c.date) }])));
+    loadConcerts();
+  }
+}
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
+showTab(store.get('kpop.tab', 'releases'));
 
 renderTypes(); showGroups();
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
