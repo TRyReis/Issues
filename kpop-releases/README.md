@@ -31,3 +31,17 @@ Community in MusicBrainz eingetragen wurden.
 
 Hinweis: Konzerte, die nur über andere Anbieter (z. B. Eventim) verkauft werden,
 können fehlen.
+
+## Android-App (APK)
+Der Ordner `android/` enthält eine Android-App, die die Web-App in einer WebView anzeigt.
+Die APK wird automatisch von **GitHub Actions** gebaut (`.github/workflows/kpop-apk.yml`),
+sobald sich etwas in `kpop-releases/` ändert (oder manuell über „Run workflow“).
+
+Download danach unter **Releases → „K-Pop Release Radar (Android-APK)“ → KPop-Release-Radar.apk**.
+
+Ohne eigene Secrets wird mit einem wechselnden Debug-Schlüssel signiert – ein Update
+erfordert dann vorher das Deinstallieren der alten Version (Gruppen-Liste/API-Key neu eintragen).
+Für feste Signatur die Repository-Secrets `KS_BASE64` (Keystore als Base64), `KS_PASSWORD`
+und `KS_ALIAS` setzen.
+
+Lokal bauen (Android SDK nötig): `cd kpop-releases/android && gradle assembleRelease`
