@@ -13,11 +13,17 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
   Japan-Releases und Pre-Releases ein-/ausblenden · Suche nach Artist oder Titel
 - Design: Auto (wie System) / Hell / Dunkel
 - Karte antippen → Tracklist (Titelsong mit ★)
+- Künstlernamen antippen → **komplette Diskographie** nach Jahren (inkl. angekündigter Releases
+  und Solo-Releases der Mitglieder)
 - Gruppenliste wird geprüft: unbekannte/falsch geschriebene Namen werden mit Vorschlag markiert
 
-## Datenquelle
-[KPOP OFFICIAL](https://kpopofficial.com/kpop-comebacks/) – Comeback-Kalender, der nur
-koreanische Musik enthält (über die öffentliche WordPress-API, ohne Key).
+## Datenquellen (alle ohne Key)
+- [KPOP OFFICIAL](https://kpopofficial.com/kpop-comebacks/) – Comeback-Kalender, nur koreanische Musik,
+  inkl. angekündigter Releases (Hauptquelle)
+- [Deezer](https://www.deezer.com) – vollständiger Katalog für die Diskographie und für Gruppen aus
+  „Meine Gruppen“, die im Kalender fehlen (z. B. from20, cosmosy)
+- [MusicBrainz](https://musicbrainz.org) – zusätzlich für Gruppen, die im Kalender fehlen
+  (nur Künstler aus Südkorea bzw. mit K-Pop-Tag)
 
 ## Konzerte in Deutschland (Tab „Konzerte“)
 - Alle angekündigten K-Pop-Konzerte in Deutschland ab heute, nach Monat gruppiert

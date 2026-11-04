@@ -304,7 +304,7 @@ const mediaUrl = new Map();
 const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
 // Typen, Künstlernamen und Cover parallel nachladen
-async function ensureLookups(items) {
+async function ensureLookups(items, withMedia = true) {
   const jobs = [];
   if (!typeSlugById) jobs.push(kpo('album-type?per_page=100&_fields=id,slug').then(({ data }) => { typeSlugById = new Map(data.map(t => [t.id, t.slug])); }));
   for (const tax of ['group', 'artist_solo']) {
@@ -312,7 +312,7 @@ async function ensureLookups(items) {
     for (const c of chunks(ids, 100))
       jobs.push(kpo(`${tax}?include=${c.join(',')}&per_page=100&_fields=id,name`).then(({ data }) => data.forEach(t => termNames[tax].set(t.id, cleanName(t.name)))));
   }
-  const mids = [...new Set(items.map(x => x.featured_media).filter(Boolean))].filter(id => !mediaUrl.has(id));
+  const mids = withMedia ? [...new Set(items.map(x => x.featured_media).filter(Boolean))].filter(id => !mediaUrl.has(id)) : [];
   for (const c of chunks(mids, 100))
     jobs.push(kpo(`media?include=${c.join(',')}&per_page=100&_fields=id,source_url,media_details`).then(({ data }) =>
       data.forEach(m => { const sz = m.media_details?.sizes || {}; mediaUrl.set(m.id, (sz.thumbnail || sz.medium || m).source_url || ''); })));
@@ -329,9 +329,9 @@ async function fetchAlbums(query, onBatch) {
   do {
     const r = await kpo(`album?${query}&per_page=100&page=${page}&_fields=${ALBUM_FIELDS}`);
     pages = r.pages;
-    await ensureLookups(r.data);
+    await ensureLookups(r.data, !onBatch);   // mit Live-Anzeige: Cover erst nach der ersten Darstellung
     out.push(...r.data);
-    onBatch?.(out);
+    if (onBatch) { onBatch(out); await ensureLookups(r.data); onBatch(out); }
   } while (++page <= pages);
   return out;
 }
@@ -381,8 +381,14 @@ async function load() {
   $('reload').disabled = true;
   const found = new Map();
   try {
-    const { data: terms } = await kpo(`album-month-year?slug=${monthSlugs().join(',')}&_fields=id`);
-    const ids = terms.map(t => t.id).join(',');
+    const slugs = monthSlugs().join(',');
+    let mc = store.get('kpop.months', null);
+    if (!mc || mc.slugs !== slugs || Date.now() - mc.at > 864e5) {
+      const { data: terms } = await kpo(`album-month-year?slug=${slugs}&_fields=id`);
+      mc = { slugs, at: Date.now(), ids: terms.map(t => t.id).join(',') };
+      if (mc.ids) store.set('kpop.months', mc);
+    }
+    const ids = mc.ids;
     if (ids) await fetchAlbums(`album-month-year=${ids}`, batch => {
       batch.map(x => parseRelease(x)).filter(Boolean).forEach(x => found.set(x.id, x));
       render(found);
@@ -647,6 +653,7 @@ async function showTracks(r, box) {
     }
     }
   } catch { /* unten: Hinweis */ }
+  if (!tracks.length && titleTrack) tracks = [titleTrack];   // Singles: nur der Titelsong ist angegeben
   box.innerHTML = '';
   if (tracks.length) {
     const ol = document.createElement('ol'); ol.className = 'tracks';
@@ -736,7 +743,10 @@ async function openDisco(ref) {
   }
 }
 // Titel-Schlüssel für die Diskographie (Versionen wie „Japanese Ver.“ bleiben getrennt)
-const discoKey = t => norm((t || '').replace(/\s+-\s+(EP|Single)$/i, '').replace(/\s*[\(\[](feat|with|prod)[^\)\]]*[\)\]]/gi, ''));
+const discoKey = t => norm((t || '')
+  .replace(/\s+-\s+(EP|Single)$/i, '')
+  .replace(/\s*[\(\[](feat|with|prod)[^\)\]]*[\)\]]/gi, '')
+  .replace(/\s*[\(\[](digital\s+)?(ep|single|mini\s*album|album|single\s*album)[\)\]]/gi, ''));
 
 async function deezerAlbums(id) {
   const out = [];
