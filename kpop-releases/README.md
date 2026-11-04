@@ -23,7 +23,7 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 - [KPOP OFFICIAL](https://kpopofficial.com/kpop-comebacks/) – Comeback-Kalender, nur koreanische Musik,
   inkl. angekündigter Releases (Hauptquelle, mit Cover, Uhrzeit, Tracklist)
 - [kprofiles](https://kprofiles.com) – Monatslisten aller Releases (Idols, Solos, Sub-Units, Indie);
-  übernommen werden nur koreanische Künstler (🇰🇷-Flagge bzw. bekannte K-Pop-Artists), keine reinen MV-Releases
+  übernommen werden koreanische Künstler (🇰🇷-Flagge) sowie Künstler anderer Länder, deren Gruppe als K-Pop bekannt ist (z. B. &TEAM, NiziU, LAY [EXO]) oder die in „Meine Gruppen“ stehen; keine reinen MV-Releases
 - [Deezer](https://www.deezer.com) – vollständiger Katalog für die Diskographie und für Gruppen aus
   „Meine Gruppen“, die im Kalender fehlen (z. B. from20, cosmosy)
 - [MusicBrainz](https://musicbrainz.org) – zusätzlich für Gruppen, die im Kalender fehlen
