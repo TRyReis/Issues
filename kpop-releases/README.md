@@ -16,8 +16,10 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 - Design: Auto (wie System) / Hell / Dunkel
 - Künstler, die man nicht sehen will, lassen sich in der Diskographie ausblenden (rückgängig unter „Ausgeblendete Künstler“)
 - Karte antippen → Tracklist (Titelsong mit ★)
+- Solo-Künstler einer Gruppe mit Gruppennamen, z. B. „DINO (SEVENTEEN)“, „JUNG ILHOON (ehem. BTOB)“; Sub-Unit-Releases
+  mit Unit-Namen und „Sub-Unit“-Label (z. B. „ZEROBASEONE EMP“, „zenith (tripleS)“)
 - Künstlernamen antippen → **komplette Diskographie** nach Jahren (inkl. angekündigter Releases
-  und Solo-Releases der Mitglieder)
+  und Solo-Releases der Mitglieder; Untergruppen laut MusicBrainz, z. B. tripleS: Moon, Sun, Neptune, Zenith …)
 - Gruppenliste wird geprüft: unbekannte/falsch geschriebene Namen werden mit Vorschlag markiert
 
 ## Datenquellen (alle ohne Key)

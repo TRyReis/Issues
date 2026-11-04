@@ -412,10 +412,17 @@ function parseRelease(x, windowed = true) {
              : typeSlugs.some(t => /single/.test(t)) ? 'Single' : typeSlugs.includes('ost') ? 'OST' : 'Sonstiges';
   // z. B. „9th Mini Album“ aus „TXT 9th Mini Album – PERFECT STORM“
   const prefix = [artist, ...groupNames, ...soloNames].find(n => n && left.toLowerCase().startsWith(n.toLowerCase()));
-  const label = (prefix ? left.slice(prefix.length).trim() : '') || type;
+  let label = (prefix ? left.slice(prefix.length).trim() : '') || type;
+  // Sub-Unit (laut Kategorie): Unit-Name steht vor der Release-Art, z. B. „ZEROBASEONE EMP Digital Single“ → „ZEROBASEONE EMP“
+  const isUnit = (x.class_list || []).some(c => c === 'album-category-sub-unit-album' || c === 'artist-type-sub-unit');
+  let unitName = '';
+  if (isUnit && prefix) {
+    const m = left.slice(prefix.length).trim().match(/^(.*?)\s*\b((?:\d+(?:st|nd|rd|th)\s+)?(?:(?:Digital|Mini|Single|Full|Special|Japan(?:ese)?|Repackage|Debut|Pre-?release|English|Project)\s+)*(?:Album|Single|EP|Pre-?release|OST|Song))\b/i);
+    if (m && m[1] && m[1].length <= 30) { unitName = `${prefix} ${m[1]}`; label = m[2]; }
+  }
 
   return {
-    id: x.id, title, artist, refs: shownRefs, type, label, link: x.link,
+    id: x.id, title, artist: unitName || artist, unit: isUnit, unitName, refs: shownRefs, type, label, link: x.link,
     solo: !groupNames.length,
     japan: typeSlugs.includes('japanese-album'), ost: typeSlugs.includes('ost'),
     pre: /pre-?release/i.test(left), major: true,
@@ -449,21 +456,26 @@ const kpKind = k => k.replace(/\bDebut\b/g, 'Debüt').replace(/^(Solo|Sub-unit|O
 function kprofItem(flag, artistRaw, titleRaw, kind, date, partial, link) {
   if (/MV Release/i.test(kind)) return null;                // nur Musikvideo zu bereits erschienenem Song
   const artist = artistRaw.replace(/\s+/g, ' ').trim();
-  const brackets = [...artist.matchAll(/\[([^\]]+)\]/g)].map(m => m[1].replace(/^former(ly)?\s+/i, '').trim());
+  const rawBrackets = [...artist.matchAll(/\[([^\]]+)\]/g)].map(m => m[1].trim());
+  const brackets = rawBrackets.map(b => b.replace(/^former(ly)?\s+/i, '').trim());
+  // Anzeige: „SEVENTEEN“ bzw. „ehem. BTOB“ (doppelte wie bei „KAI [EXO] X SEHUN [EXO]“ nur einmal)
+  const memberOf = [...new Map(rawBrackets.map(b => [norm(b), { name: b.replace(/^former(ly)?\s+/i, '').trim(), former: /^former/i.test(b) }])).values()];
   const main = artist.replace(/\s*\[[^\]]*\]/g, '').trim();
-  const parts = main.split(/\s+X\s+|\s*&\s*(?=[A-Z])|,\s*/).map(x => x.trim()).filter(Boolean);
+  // Kollaborationen trennen („A X B“, „A & B“, „A, B“) – aber nicht „D&E“ oder „AMPERS&ONE“ (ohne Leerzeichen)
+  const parts = main.split(/\s+X\s+|\s+&\s+|,\s*/).map(x => x.trim()).filter(Boolean);
   const title = (titleRaw || '').trim();
   return {
     id: 'kp-' + norm(artist) + '-' + norm(title) + '-' + date.toISOString().slice(0, 10), src: 'kprofiles', flag,
     title: title && !/^[-–—?]+$/.test(title) && !/^TBA$/i.test(title) ? title.replace(/\s*\|\s*/g, ' · ') : 'Titel noch offen',
     artist, refs: parts.length === 1 ? [{ src: 'name', name: parts[0] }] : parts.map(n => ({ src: 'name', name: n })),
     type: 'Sonstiges', label: kpKind(kind), link,
-    solo: /solo/i.test(kind) || (brackets.length > 0 && !/sub-?unit/i.test(kind)),
+    solo: !/sub-?unit/i.test(kind) && (/solo/i.test(kind) || brackets.length > 0),
     japan: /japan/i.test(kind), ost: false, pre: /pre-?(release|debut)/i.test(kind),
-    major: /comeback|debut/i.test(kind),
+    major: /comeback|debut/i.test(kind), unit: /sub-?unit/i.test(kind),
     names: [...new Set([main, ...parts, ...brackets].flatMap(nameVariants))],
     kpParts: [...new Set([main, ...parts].flatMap(nameVariants))],     // Künstlername(n) selbst
     kpGroups: [...new Set(brackets.flatMap(nameVariants))],            // [Gruppe] in eckigen Klammern
+    memberOf,
     date, partial, timeDE: '', at: null, cover: ''
   };
 }
@@ -660,7 +672,7 @@ async function load() {
     checkGroups();
     loadedAt = new Date();
     updateStatus();
-    store.set('kpop.cache', { v: 8, at: Date.now(), list: [...found.values()] });
+    store.set('kpop.cache', { v: 11, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
   } finally {
@@ -941,12 +953,30 @@ function card(r) {
       a.title = 'Diskographie anzeigen';
       a.onclick = e => { e.stopPropagation(); openDisco(ref); };
     });
+    // Unit-Name aus dem Kalender, z. B. „ZEROBASEONE EMP“: „EMP“ an den Gruppen-Link anhängen
+    if (r.unitName && r.refs.length === 1 && norm(r.unitName).startsWith(norm(r.refs[0].name)))
+      artistEl.append(' ' + r.unitName.slice(r.refs[0].name.length).trim());
+    // Solo-/Unit-Künstler einer Gruppe: Gruppenname dazuschreiben, z. B. „DINO (SEVENTEEN)“
+    const shownText = norm(artistEl.textContent);
+    const groupsToAdd = (r.memberOf || []).filter(g => !shownText.includes(norm(g.name)));
+    if (groupsToAdd.length) {
+      artistEl.append(' (');
+      groupsToAdd.forEach((g, i) => {
+        if (i) artistEl.append(', ');
+        if (g.former) artistEl.append('ehem. ');
+        const a = artistEl.appendChild(Object.assign(document.createElement('span'), { className: 'alink', textContent: g.name }));
+        a.title = 'Diskographie der Gruppe anzeigen';
+        a.onclick = e => { e.stopPropagation(); openDisco({ src: 'name', name: g.name }); };
+      });
+      artistEl.append(')');
+    }
   } else artistEl.textContent = r.artist;
   const meta = el.querySelector('.meta');
   const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
   if (isMine(r)) badge('★', 'soon');
   badge(r.label);
-  if (r.solo) badge('Solo', 'plain');
+  if (r.unit) badge('Sub-Unit', 'plain');
+  else if (r.solo) badge('Solo', 'plain');
   if (r.japan) badge('🇯🇵 Japan', 'plain');
   if (r.ost && r.type !== 'OST') badge('OST', 'plain');
   if (r.src) badge('Quelle: ' + r.src, 'plain');
@@ -1059,6 +1089,18 @@ async function openDisco(ref) {
   $('discoTitle').textContent = ref.name;
   $('discoSub').textContent = 'Lade Diskographie …';
   const body = $('discoBody'); body.innerHTML = ''; $('disco').scrollTop = 0;
+  // Nur ein Name bekannt (z. B. Gruppe „SEVENTEEN“ aus „DINO [SEVENTEEN]“)? Wenn es eine Gruppe im K-Pop-Kalender ist,
+  // deren vollständige Diskographie inkl. Solo-Releases der Mitglieder zeigen
+  if (ref.src === 'name') {
+    try {
+      const { data } = await kpo(`group?search=${encodeURIComponent(ref.name)}&per_page=20&_fields=id,name`);
+      // exakter Gruppenname (nicht „DK X SEUNGKWAN (SEVENTEEN)“ für „SEVENTEEN“)
+      const outer = n => norm(cleanName(n).replace(/\s*\(.*\)\s*$/, ''));
+      const hit = data.find(t => outer(t.name) === norm(ref.name)) || data.find(t => norm(cleanName(t.name)) === norm(ref.name));
+      if (hit && token === discoToken) ref = { tax: 'group', id: hit.id, name: cleanName(hit.name) };
+    } catch (e) { console.warn(e); }
+  }
+  $('discoTitle').textContent = ref.name;
   const show = (title, list) => {
     if (!list.length) return;
     body.appendChild(Object.assign(document.createElement('h2'), { textContent: title }));
@@ -1128,6 +1170,23 @@ async function openDisco(ref) {
       (noCatalog ? ' · Ältere Releases: kein eindeutiger Katalog gefunden' : '');
     show('Releases', main);
     show('Solo-Releases der Mitglieder', solo);
+    // Untergruppen (nur bei Gruppen, die laut MusicBrainz welche haben)
+    if (ref.tax === 'group' || ref.src === 'name') {
+      try {
+        const units = await mbSubunits(ref.name);
+        if (units.length && token === discoToken) {
+          const h = body.appendChild(Object.assign(document.createElement('h2'), { textContent: `Untergruppen (${units.length})` }));
+          const row = body.appendChild(Object.assign(document.createElement('div'), { className: 'frow' }));
+          for (const u of units) {
+            const b = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: u }));
+            b.onclick = () => openDisco({ src: 'name', name: u });
+          }
+          body.appendChild(Object.assign(document.createElement('p'), { className: 'sub',
+            textContent: 'Quelle: MusicBrainz. Welche Unit welches Lied singt, steht in den Quellen meist nur beim Album (z. B. „msnz <Beyond Beauty>“).' }));
+          h.id = 'subunits';
+        }
+      } catch (e) { console.warn('Untergruppen', e.message); }
+    }
   } catch (e) {
     if (token === discoToken) $('discoSub').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}</span>`;
   }
@@ -1158,14 +1217,39 @@ async function deezerCatalog(name, known, strict = false) {
     .sort((a, b) => (b.nb_fan || 0) - (a.nb_fan || 0)).slice(0, 3);
   const pastItems = known.filter(k => k.date <= today && !k.partial);
   const past = new Set(pastItems.map(k => discoKey(k.title)));
+  // Eindeutig: exakt gleicher Name UND mit Abstand bekanntester Künstler dieses Namens
+  // (z. B. SEVENTEEN mit 646.000 Fans vs. eine andere „Seventeen“ mit 22.000) – hilft, wenn der Kalender
+  // nur falsch zugeordnete Einträge hat und daher kein Titel übereinstimmt
+  const exact = (r.data || []).filter(a => norm(a.name) === norm(base)).sort((a, b) => (b.nb_fan || 0) - (a.nb_fan || 0));
+  const dominant = exact[0] && (exact[0].nb_fan || 0) >= 20000 && (exact[0].nb_fan || 0) >= 10 * (exact[1]?.nb_fan || 0) ? exact[0] : null;
   for (const a of cands) {
     const ref = { src: 'Deezer', id: a.id, name: a.name };
     const list = (await deezerAlbums(a.id)).map(x => deezerRelease(x, ref, name)).filter(Boolean);
     // Bestätigt, wenn ein Titel übereinstimmt – oder (bei exakt gleichem Namen) ein Release am selben Tag (±2) existiert
     const confirmed = list.some(x => past.has(discoKey(x.title)) || pastItems.some(k => Math.abs(k.date - x.date) <= 2 * 864e5));
-    if ((!past.size && !strict) || confirmed) return { ref, list };
+    if ((!past.size && !strict) || confirmed || a === dominant) return { ref, list };
   }
   return null;
+}
+
+// Untergruppen einer Gruppe laut MusicBrainz (Beziehung „subgroup“), 30 Tage gemerkt
+async function mbSubunits(name) {
+  const cache = store.get('kpop.subunits', {});
+  const c = cache[norm(name)];
+  if (c && Date.now() - c.at < 30 * 864e5) return c.list;
+  const want = new Set(nameVariants(name));
+  const q = `artist:"${name.replace(/(["\\])/g, '\\$1')}"`;
+  const r = await mb(`artist?query=${encodeURIComponent(q)}&limit=10`);
+  const hit = (r.artists || []).filter(a => a.type === 'Group' && nameVariants(a.name).some(v => want.has(v)) && mbIsKorean(a))
+    .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  let list = [];
+  if (hit) {
+    const d = await mb(`artist/${hit.id}?inc=artist-rels`);
+    list = (d.relations || []).filter(x => x.type === 'subgroup' && x.direction === 'backward').map(x => x.artist.name);
+  }
+  cache[norm(name)] = { at: Date.now(), list };
+  store.set('kpop.subunits', cache);
+  return list;
 }
 
 function closeDisco() { $('disco').hidden = true; document.body.style.overflow = ''; discoToken++; }
@@ -1845,7 +1929,7 @@ renderFilters(); showGroups(); renderHidden();
 showTab(store.get('kpop.tab', 'today'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
 const cache = store.get('kpop.cache', null);
-if (cache?.v === 8 && Date.now() - cache.at < 6 * 36e5) {
+if (cache?.v === 11 && Date.now() - cache.at < 6 * 36e5) {
   render(new Map(revive(cache.list).map(r => [r.id, r])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
 }
