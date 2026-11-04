@@ -6,25 +6,24 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 **Starten:** `index.html` im Browser öffnen (Doppelklick genügt).
 
 ## Funktionen
-- **Demnächst**: angekündigte Releases (bis ca. 4 Monate im Voraus)
+- **Demnächst**: angekündigte Comebacks (bis ca. 5 Monate im Voraus), inkl. deutscher Uhrzeit
 - **Neu erschienen**: Releases der letzten 30 Tage, neueste zuerst
+- „Meine Gruppen“ (inkl. Solo-Releases der Mitglieder) oder „Alle K-Pop“
 - Filter nach Album / EP / Single und Suche nach Gruppe oder Titel
-- Karte antippen → Tracklist (Lieder) des Releases
-- „Meine Gruppen“: eigene Liste von Gruppen pflegen (wird im Browser gespeichert)
+- Karte antippen → Tracklist (Titelsong mit ★)
+- Gruppenliste wird geprüft: unbekannte/falsch geschriebene Namen werden mit Vorschlag markiert
 
 ## Datenquelle
-[MusicBrainz](https://musicbrainz.org) (frei, ohne API-Key) und das
-[Cover Art Archive](https://coverartarchive.org). Geladen werden alle Releases mit
-dem Tag „k-pop“ sowie alle Releases der Gruppen aus „Meine Gruppen“.
-Hinweis: Angekündigte Releases erscheinen nur, wenn sie bereits von der
-Community in MusicBrainz eingetragen wurden.
+[KPOP OFFICIAL](https://kpopofficial.com/kpop-comebacks/) – Comeback-Kalender, der nur
+koreanische Musik enthält (über die öffentliche WordPress-API, ohne Key).
 
 ## Konzerte in Deutschland (Tab „Konzerte“)
-- Alle angekündigten K-Pop-Konzerte/-Events in Deutschland ab heute, nach Monat gruppiert
+- Alle angekündigten K-Pop-Konzerte in Deutschland ab heute, nach Monat gruppiert
+- Große Tourneen kommen ohne Key von KPOP OFFICIAL
 - Datum, Uhrzeit, Stadt, Halle, Status (abgesagt/verschoben), Vorverkaufsstart und Ticket-Link
-- Gesucht wird nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
+- Optional zusätzlich Ticketmaster (findet auch kleinere Konzerte): Suche nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
 
-**Einmalig nötig:** ein kostenloser Ticketmaster API-Key.
+**Optional:** ein kostenloser Ticketmaster API-Key.
 1. Auf https://developer-acct.ticketmaster.com/user/register registrieren
 2. Unter „My Apps“ den **Consumer Key** kopieren
 3. In der App im Tab „Konzerte“ unter „Ticketmaster API-Key“ einfügen

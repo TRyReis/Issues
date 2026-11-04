@@ -61,6 +61,8 @@
   .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 12px; }
   .badge { border-radius: 6px; padding: 2px 7px; background: var(--accent-soft); color: var(--accent); }
   .badge.soon { background: var(--soon-soft); color: var(--soon); }
+  .badge.plain { background: none; border: 1px solid var(--line); color: var(--muted); }
+  .tracks li.title-track { color: var(--text); font-weight: 600; }
   .tracks { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
   .empty, .status { color: var(--muted); padding: 12px 0; }
   .err { color: var(--accent); }
@@ -84,15 +86,18 @@
   <div id="tab-releases">
   <div class="toolbar">
     <input type="search" id="q" placeholder="Gruppe oder Titel filtern …" aria-label="Filter">
+    <span id="scopes"></span>
     <span id="types"></span>
     <button id="reload" class="primary">↻ Aktualisieren</button>
   </div>
 
   <details>
     <summary>Meine Gruppen (<span id="groupCount">0</span>)</summary>
-    <p class="sub">Eine Gruppe pro Zeile. Zusätzlich werden alle Releases mit dem MusicBrainz-Tag „k-pop“ geladen.</p>
+    <p class="sub">Eine Gruppe pro Zeile. Bei „Meine Gruppen“ werden nur Releases dieser Gruppen
+      (inkl. Solo-Releases ihrer Mitglieder) angezeigt, bei „Alle K-Pop“ alle.</p>
     <textarea id="groups" spellcheck="false"></textarea>
-    <button id="saveGroups" class="primary">Speichern &amp; neu laden</button>
+    <div id="groupCheck" class="sub"></div>
+    <button id="saveGroups" class="primary">Speichern</button>
     <button id="resetGroups">Standardliste</button>
   </details>
 
@@ -108,9 +113,8 @@
   </section>
 
   <footer>
-    Daten: <a href="https://musicbrainz.org" target="_blank" rel="noopener">MusicBrainz</a> (Community-Datenbank),
-    Cover: <a href="https://coverartarchive.org" target="_blank" rel="noopener">Cover Art Archive</a>.
-    Angekündigte Releases erscheinen hier nur, wenn sie bereits in MusicBrainz eingetragen sind.
+    Daten: <a href="https://kpopofficial.com/kpop-comebacks/" target="_blank" rel="noopener">KPOP OFFICIAL – Comeback-Kalender</a>.
+    Datum = offizielles Release-Datum in Korea (KST), „bei uns“ = deutsche Uhrzeit.
     Karte antippen für die Tracklist.
   </footer>
   </div>
@@ -121,10 +125,11 @@
       <button id="creload" class="primary">↻ Aktualisieren</button>
     </div>
     <details id="keyDetails">
-      <summary>Ticketmaster API-Key</summary>
-      <p class="sub">Für die Konzertdaten wird ein kostenloser Key benötigt:
+      <summary>Optional: Ticketmaster API-Key für mehr Konzerte</summary>
+      <p class="sub">Große Tourneen kommen automatisch von KPOP OFFICIAL. Mit einem kostenlosen Ticketmaster-Key
+        werden zusätzlich kleinere K-Pop-Konzerte gefunden:
         auf <a href="https://developer-acct.ticketmaster.com/user/register" target="_blank" rel="noopener">developer.ticketmaster.com</a>
-        registrieren → „My Apps“ → <b>Consumer Key</b> kopieren und hier einfügen. Der Key bleibt nur in diesem Browser gespeichert.</p>
+        registrieren → „My Apps“ → <b>Consumer Key</b> kopieren und hier einfügen.</p>
       <div class="keybox">
         <input id="tmKey" type="text" placeholder="Consumer Key" autocomplete="off" spellcheck="false">
         <button id="saveKey" class="primary">Speichern &amp; laden</button>
@@ -133,25 +138,27 @@
     <div class="status" id="cstatus"></div>
     <div id="concerts"></div>
     <footer>
-      Daten: <a href="https://developer.ticketmaster.com" target="_blank" rel="noopener">Ticketmaster</a>.
-      Gesucht wird nach „K-Pop“ sowie nach allen Gruppen aus „Meine Gruppen“ (Tab Releases).
-      Konzerte, die ausschließlich über andere Anbieter (z. B. Eventim) verkauft werden, fehlen hier evtl. –
-      im Zweifel auf der Seite des Veranstalters gegenzuchecken.
+      Daten: <a href="https://kpopofficial.com" target="_blank" rel="noopener">KPOP OFFICIAL</a>
+      und (mit Key) <a href="https://developer.ticketmaster.com" target="_blank" rel="noopener">Ticketmaster</a>.
+      Termine bitte vor dem Ticketkauf beim Veranstalter prüfen.
     </footer>
   </div>
 </main>
 
 <script>
-const MB = 'https://musicbrainz.org/ws/2';
+const KPO = 'https://kpopofficial.com/wp-json/wp/v2';
 const DAYS_BACK = 30;      // max. 1 Monat zurück
-const DAYS_AHEAD = 120;    // wie weit in die Zukunft
+const DAYS_AHEAD = 150;    // wie weit in die Zukunft
 const DEFAULT_GROUPS = [
-  'BTS','BLACKPINK','TWICE','Stray Kids','SEVENTEEN','aespa','NewJeans','IVE','LE SSERAFIM',
-  'ENHYPEN','TOMORROW X TOGETHER','ITZY','(G)I-DLE','NCT 127','NCT DREAM','ATEEZ','BABYMONSTER',
+  'BTS','BLACKPINK','TWICE','Stray Kids','SEVENTEEN','aespa','IVE','LE SSERAFIM',
+  'ENHYPEN','TOMORROW X TOGETHER','ITZY','i-dle','NCT 127','NCT DREAM','ATEEZ','BABYMONSTER',
   'ILLIT','RIIZE','ZEROBASEONE','KISS OF LIFE','NMIXX','TWS','BOYNEXTDOOR','Red Velvet','MONSTA X',
-  'THE BOYZ','fromis_9','STAYC','Kep1er','xikers','P1Harmony','MEOVV','izna','KickFlip'
+  'THE BOYZ','fromis_9','STAYC','Kep1er','xikers','P1Harmony','MEOVV','izna','KickFlip',
+  'Hearts2Hearts','HEART OF WOMAN','tripleS','RESCENE','TREASURE','NCT WISH'
 ];
 const TYPES = ['Alle', 'Album', 'EP', 'Single'];
+const SCOPES = { mine: 'Meine Gruppen', all: 'Alle K-Pop' };
+const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -161,127 +168,147 @@ const store = {
 
 const today = new Date(); today.setHours(0, 0, 0, 0);
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-const iso = d => d.toISOString().slice(0, 10);
 const from = addDays(today, -DAYS_BACK), to = addDays(today, DAYS_AHEAD);
 const fmt = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 
 let groups = store.get('kpop.groups', DEFAULT_GROUPS);
 let typeFilter = store.get('kpop.type', 'Alle');
+let scope = store.get('kpop.scope', 'mine');
 let releases = [];
 
 $('range').textContent = `Releases vom ${fmt.format(from)} bis ${fmt.format(to)}`;
 
-// --- MusicBrainz (max. 1 Anfrage pro Sekunde) ---
-let lastCall = 0;
-async function mb(path) {
-  const wait = lastCall + 1100 - Date.now();
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
-  lastCall = Date.now();
-  const res = await fetch(`${MB}/${path}${path.includes('?') ? '&' : '?'}fmt=json`, { headers: { Accept: 'application/json' } });
-  if (res.status === 503) { await new Promise(r => setTimeout(r, 2000)); return mb(path); }
-  if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
-  return res.json();
+// --- Hilfsfunktionen ---
+const norm = s => (s || '').toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]/gu, '');
+const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s || ''; return t.value; };
+const strip = s => decode((s || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+const monthIdx = name => MONTHS.findIndex(m => m.startsWith((name || '').toLowerCase().slice(0, 3)));
+
+// Umbenannte Gruppen / gängige Schreibweisen
+const ALIASES = { gidle: 'idle', txt: 'tomorrowxtogether', ampersone: 'ampersandone' };
+// „TOMORROW X TOGETHER (TXT)“ → [voller Name, „TOMORROW X TOGETHER“, „TXT“]
+function nameVariants(name) {
+  const out = [name];
+  const m = name.match(/^(.*?)\s*\((.*)\)\s*$/);
+  if (m) { out.push(m[1]); out.push(...m[2].split(/,|\//)); }
+  const n = out.map(norm).filter(Boolean);
+  return [...new Set([...n, ...n.map(v => ALIASES[v]).filter(Boolean)])];
 }
 
-const esc = s => s.replace(/(["\\])/g, '\\$1');
-const dateRange = `firstreleasedate:[${iso(from)} TO ${iso(to)}]`;
+async function kpo(path) {
+  const res = await fetch(`${KPO}/${path}`);
+  if (!res.ok) throw new Error(`KPOP OFFICIAL HTTP ${res.status}`);
+  return { data: await res.json(), pages: +(res.headers.get('X-WP-TotalPages') || 1) };
+}
 
-async function searchRG(query) {
-  const out = [];
-  for (let offset = 0; offset < 300; offset += 100) {
-    const data = await mb(`release-group?query=${encodeURIComponent(query)}&limit=100&offset=${offset}`);
-    out.push(...(data['release-groups'] || []));
-    if (offset + 100 >= (data.count || 0)) break;
+// Release-Datum aus „November 13, 2026 · Friday · 2 PM KST“
+function parseKpoDate(text) {
+  let m = text.match(/\b([A-Z][a-z]+)\s+(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?,?\s+(\d{4})/);
+  if (m && monthIdx(m[1]) >= 0) {
+    const mo = monthIdx(m[1]), y = +m[4];
+    return { date: new Date(y, mo, +m[2]), end: m[3] ? new Date(y, mo, +m[3]) : null, partial: false };
   }
+  m = text.match(/\b([A-Z][a-z]+)\s+(\d{4})\b/);
+  if (m && monthIdx(m[1]) >= 0) return { date: new Date(+m[2], monthIdx(m[1]), 1), end: null, partial: true };
+  return null;
+}
+
+// „2 PM KST“ → deutsche Uhrzeit
+function kstToGerman(date, text) {
+  const m = text.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*KST/i);
+  if (!m) return '';
+  let h = +m[1] % 12; if (/pm/i.test(m[3])) h += 12;
+  const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), h - 9, +(m[2] || 0)));
+  return utc.toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit' }) + ' Uhr';
+}
+
+// ================= Releases (KPOP OFFICIAL) =================
+function monthSlugs() {
+  const out = [];
+  for (let d = new Date(from.getFullYear(), from.getMonth(), 1); d <= to; d.setMonth(d.getMonth() + 1))
+    out.push(`${MONTHS[d.getMonth()]}-${d.getFullYear()}`);
   return out;
 }
 
-// --- Strikte K-Pop-Prüfung ---
-// Achtung: In der MusicBrainz-Suche wird `tag:k-pop` am Bindestrich zerlegt und findet dann
-// auch alles mit dem Tag „pop“. Deshalb wird jedes Ergebnis zusätzlich hier geprüft.
-const norm = s => (s || '').toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]/gu, '');
-const KPOP_TAGS = new Set(['kpop', 'koreanpop', 'kpopidol', 'koreanidol']);
-const hasKpopTag = tags => (tags || []).some(t => KPOP_TAGS.has(norm(t.name)));
-const isKoreanArtist = a =>
-  a.country === 'KR' || norm(a.area?.name) === 'southkorea' || hasKpopTag(a.tags);
+function parseRelease(x) {
+  const terms = (x._embedded?.['wp:term'] || []).flat();
+  const tax = t => terms.filter(z => z.taxonomy === t);
+  const excerpt = strip(x.excerpt?.rendered);
+  let d = parseKpoDate(excerpt);
+  if (!d) {  // Fallback: Kalender-Kategorien
+    const y = +tax('calendar-year')[0]?.name, mo = parseInt(tax('calendar-month')[0]?.name) - 1, day = +tax('calendar-date')[0]?.name;
+    if (y && mo >= 0) d = { date: new Date(y, mo, day || 1), partial: !day };
+  }
+  if (!d || d.date < from || d.date > to) return null;
 
-// Gruppenname → MusicBrainz-Künstler-ID (nur wenn exakter Name/Alias UND koreanisch bzw. K-Pop)
-let artistIds = store.get('kpop.mbids', {});
-async function resolveGroup(name) {
-  const hit = artistIds[name];
-  if (hit && Date.now() - hit.at < 30 * 864e5) return hit;
-  const data = await mb(`artist?query=${encodeURIComponent(`artist:"${esc(name)}" OR alias:"${esc(name)}"`)}&limit=15`);
-  const want = norm(name);
-  const match = (data.artists || [])
-    .filter(a => (norm(a.name) === want || (a.aliases || []).some(al => norm(al.name) === want)) && isKoreanArtist(a))
-    .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
-  const res = { id: match?.id || null, name: match?.name || null, at: Date.now() };
-  artistIds[name] = res; store.set('kpop.mbids', artistIds);
-  return res;
-}
+  const fullTitle = decode(x.title?.rendered).replace(/\s*\(\d{4}\)\s*$/, '');
+  const dash = fullTitle.search(/\s[–—-]\s/);
+  const left = dash > 0 ? fullTitle.slice(0, dash) : '';
+  const title = dash > 0 ? fullTitle.slice(dash + 3).trim() : fullTitle;
 
-function normalise(rg) {
-  const d = rg['first-release-date'] || '';
-  const full = d.length === 10 ? d : d.length === 7 ? d + '-01' : null; // "2026-11" → Monatsanfang
-  if (!full) return null;
-  const date = new Date(full + 'T00:00:00');
-  if (date < from || date > to) return null;
-  const secondary = rg['secondary-types'] || [];
-  if (secondary.some(t => ['Live', 'Compilation', 'DJ-mix', 'Mixtape/Street', 'Interview'].includes(t))) return null;
+  const groupNames = tax('group').map(t => decode(t.name));
+  const soloNames = tax('artist_solo').map(t => decode(t.name));
+  const artist = (groupNames.length ? groupNames : soloNames).join(' × ') || left || 'Unbekannt';
+  const typeSlugs = tax('album-type').map(t => t.slug);
+  const type = typeSlugs.includes('full-album') ? 'Album' : typeSlugs.includes('ep') ? 'EP'
+             : typeSlugs.some(t => /single/.test(t)) ? 'Single' : typeSlugs.includes('ost') ? 'OST' : 'Sonstiges';
+  // z. B. „9th Mini Album“ aus „TXT 9th Mini Album – PERFECT STORM“
+  const prefix = [artist, ...groupNames, ...soloNames].find(n => n && left.toLowerCase().startsWith(n.toLowerCase()));
+  const label = (prefix ? left.slice(prefix.length).trim() : '') || type;
+  const media = x._embedded?.['wp:featuredmedia']?.[0];
+  const sizes = media?.media_details?.sizes || {};
+
   return {
-    id: rg.id,
-    title: rg.title,
-    artist: (rg['artist-credit'] || []).map(a => (a.name || a.artist?.name) + (a.joinphrase || '')).join('') || 'Unbekannt',
-    type: rg['primary-type'] || 'Sonstiges',
-    secondary,
-    date, partial: d.length === 7
+    id: x.id, title, artist, type, label, link: x.link,
+    solo: !groupNames.length,
+    japan: typeSlugs.includes('japanese-album'), ost: typeSlugs.includes('ost'),
+    names: [...groupNames, ...soloNames].flatMap(nameVariants),
+    date: d.date, partial: d.partial, timeDE: d.partial ? '' : kstToGerman(d.date, excerpt),
+    cover: (sizes.thumbnail || sizes.medium || media)?.source_url || ''
   };
 }
 
 async function load() {
-  $('status').innerHTML = 'Lade Releases von MusicBrainz …';
+  $('status').textContent = 'Lade Comeback-Kalender …';
   $('reload').disabled = true;
   const found = new Map();
-  const add = (list, accept) => list.filter(accept).map(normalise).filter(Boolean).forEach(r => found.set(r.id, r));
-  const creditIds = rg => (rg['artist-credit'] || []).map(a => a.artist?.id).filter(Boolean);
   try {
-    // 1) Gruppen eindeutig zu MusicBrainz-IDs auflösen
-    const known = new Set(), missing = [];
-    for (let i = 0; i < groups.length; i++) {
-      if (!artistIds[groups[i]] || Date.now() - artistIds[groups[i]].at >= 30 * 864e5)
-        $('status').textContent = `Prüfe Gruppen ${i + 1}/${groups.length}: ${groups[i]} …`;
-      const r = await resolveGroup(groups[i]);
-      if (r.id) known.add(r.id); else missing.push(groups[i]);
+    const { data: terms } = await kpo(`album-month-year?slug=${monthSlugs().join(',')}&_fields=id`);
+    const ids = terms.map(t => t.id).join(',');
+    if (ids) {
+      let page = 1, pages = 1;
+      do {
+        const r = await kpo(`album?album-month-year=${ids}&per_page=100&page=${page}` +
+          `&_embed=wp:term,wp:featuredmedia&_fields=id,title,excerpt,link,_links,_embedded`);
+        pages = r.pages;
+        r.data.map(parseRelease).filter(Boolean).forEach(x => found.set(x.id, x));
+        render(found);
+      } while (++page <= pages);
     }
-    // 2) Releases genau dieser Künstler (per ID, keine Namens-Ähnlichkeit)
-    const ids = [...known];
-    for (let i = 0; i < ids.length; i += 15) {
-      $('status').textContent = `Lade Releases (${Math.min(i + 15, ids.length)}/${ids.length} Gruppen) …`;
-      add(await searchRG(`arid:(${ids.slice(i, i + 15).join(' OR ')}) AND ${dateRange}`),
-          rg => creditIds(rg).some(id => known.has(id)));
-      render(found);
-    }
-    // 3) Weitere Releases, die selbst als K-Pop getaggt sind (Tag wird exakt geprüft)
-    $('status').textContent = 'Suche weitere K-Pop-Releases …';
-    add(await searchRG(`(tag:"k-pop" OR tag:kpop) AND ${dateRange}`),
-        rg => hasKpopTag(rg.tags) || creditIds(rg).some(id => known.has(id)));
     render(found);
-
-    $('status').textContent = `${found.size} K-Pop-Releases gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}` +
-      (missing.length ? ` · Nicht als K-Pop-Gruppe gefunden: ${missing.join(', ')}` : '');
-    store.set('kpop.cache', { v: 2, at: Date.now(), list: [...found.values()] });
+    const shown = releases.filter(inScope).length;
+    $('status').textContent = `${shown} Releases` + (scope === 'mine' ? ` deiner Gruppen (${found.size} K-Pop-Releases insgesamt)` : '') +
+      ` · Stand ${new Date().toLocaleTimeString('de-DE')}`;
+    store.set('kpop.cache', { v: 3, at: Date.now(), list: [...found.values()] });
   } catch (e) {
-    $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Später erneut versuchen.</span>`;
+    $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
   } finally {
     $('reload').disabled = false;
   }
 }
 
 // --- Darstellung ---
+const mineSet = () => new Set(groups.flatMap(nameVariants));
+function inScope(r) {
+  if (scope === 'all') return true;
+  const mine = mineSet();
+  return r.names.some(n => mine.has(n));
+}
+
 function render(map) {
-  releases = [...map.values()];
+  if (map) releases = [...map.values()];
   const q = $('q').value.trim().toLowerCase();
-  const list = releases.filter(r =>
+  const list = releases.filter(r => inScope(r) &&
     (typeFilter === 'Alle' || r.type === typeFilter) &&
     (!q || r.title.toLowerCase().includes(q) || r.artist.toLowerCase().includes(q)));
   const up = list.filter(r => r.date > today).sort((a, b) => a.date - b.date);
@@ -310,26 +337,33 @@ function relDays(d) {
 function card(r) {
   const el = document.createElement('div');
   el.className = 'card'; el.tabIndex = 0;
-  const upcoming = r.date > today;
-  const dateTxt = r.partial
-    ? r.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
-    : fmt.format(r.date);
   el.innerHTML = `
-    <img class="cover" alt="" loading="lazy" src="https://coverartarchive.org/release-group/${r.id}/front-250">
+    <div class="cover">💿</div>
     <div class="info">
       <div class="title"></div>
       <div class="artist"></div>
-      <div class="meta">
-        <span class="badge">${r.type}</span>
-        <span class="badge ${upcoming ? 'soon' : ''}">${dateTxt}${r.partial ? '' : ' · ' + relDays(r.date)}</span>
-      </div>
+      <div class="meta"></div>
       <div class="more"></div>
     </div>`;
+  if (r.cover) {
+    const img = document.createElement('img');
+    img.className = 'cover'; img.alt = ''; img.loading = 'lazy'; img.src = r.cover;
+    img.onerror = () => img.replaceWith(Object.assign(document.createElement('div'), { className: 'cover', textContent: '💿' }));
+    el.querySelector('.cover').replaceWith(img);
+  }
   el.querySelector('.title').textContent = r.title;
   el.querySelector('.title').title = r.title;
   el.querySelector('.artist').textContent = r.artist;
-  const img = el.querySelector('img');
-  img.onerror = () => { const ph = document.createElement('div'); ph.className = 'cover'; ph.textContent = '💿'; img.replaceWith(ph); };
+  const meta = el.querySelector('.meta');
+  const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
+  badge(r.label);
+  if (r.solo) badge('Solo', 'plain');
+  if (r.japan) badge('🇯🇵 Japan', 'plain');
+  if (r.ost && r.type !== 'OST') badge('OST', 'plain');
+  const dateTxt = r.partial ? r.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) + ' (Tag offen)'
+                            : `${fmt.format(r.date)} · ${relDays(r.date)}`;
+  badge(dateTxt, r.date > today ? 'soon' : '');
+  if (r.timeDE && r.date >= today) badge(`🇩🇪 bei uns: ${r.timeDE}`, 'plain');
   const toggle = () => showTracks(r, el.querySelector('.more'));
   el.onclick = toggle;
   el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
@@ -340,48 +374,140 @@ async function showTracks(r, box) {
   if (box.dataset.open) { box.innerHTML = ''; delete box.dataset.open; return; }
   box.dataset.open = '1';
   box.innerHTML = '<div class="tracks">Lade Tracklist …</div>';
+  let tracks = [], titleTrack = '';
   try {
-    const data = await mb(`release?release-group=${r.id}&inc=recordings&limit=1`);
-    const tracks = (data.releases?.[0]?.media || []).flatMap(m => m.tracks || []);
-    if (!tracks.length) { box.innerHTML = '<div class="tracks">Noch keine Tracklist eingetragen.</div>'; return; }
+    const { data } = await kpo(`album/${r.id}?_fields=content`);
+    const doc = new DOMParser().parseFromString(data.content?.rendered || '', 'text/html');
+    for (const el of doc.querySelectorAll('.gspb_meta_value, .gspb_text, p')) {
+      const lines = el.innerHTML.split(/<br\s*\/?>/i).map(strip).filter(Boolean);
+      if (!titleTrack && /^Title\s*[–—-]/.test(lines[0] || '')) titleTrack = lines[0].replace(/^Title\s*[–—-]\s*/, '').replace(/^[“"]|[”"]$/g, '');
+      if (!tracks.length && lines.length && /^1\.\s/.test(lines[0]) && lines.every(l => /^\d+\.\s/.test(l)))
+        tracks = lines.map(l => l.replace(/^\d+\.\s*/, ''));
+    }
+  } catch { /* unten: Hinweis */ }
+  box.innerHTML = '';
+  if (tracks.length) {
     const ol = document.createElement('ol'); ol.className = 'tracks';
-    tracks.forEach(t => { const li = document.createElement('li'); li.textContent = t.title; ol.appendChild(li); });
-    box.innerHTML = ''; box.appendChild(ol);
-    const a = document.createElement('a');
-    a.href = `https://musicbrainz.org/release-group/${r.id}`; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = 'Auf MusicBrainz ansehen'; a.onclick = e => e.stopPropagation();
-    a.style.fontSize = '12px'; box.appendChild(a);
-  } catch (e) {
-    box.innerHTML = `<div class="tracks err">Tracklist konnte nicht geladen werden.</div>`;
+    const tt = norm(titleTrack);
+    tracks.forEach(t => {
+      const li = document.createElement('li'); li.textContent = t;
+      if (tt && norm(t).startsWith(tt)) { li.className = 'title-track'; li.textContent += ' ★'; }
+      ol.appendChild(li);
+    });
+    box.appendChild(ol);
+  } else {
+    box.appendChild(Object.assign(document.createElement('div'), { className: 'tracks', textContent: 'Tracklist noch nicht bekannt.' }));
   }
+  const a = Object.assign(document.createElement('a'), { href: r.link, target: '_blank', rel: 'noopener', textContent: 'Details & Teaser ↗' });
+  a.style.fontSize = '12px'; a.onclick = e => e.stopPropagation();
+  box.appendChild(a);
 }
 
 // --- UI-Verdrahtung ---
-function renderTypes() {
-  $('types').innerHTML = '';
-  for (const t of TYPES) {
-    const b = document.createElement('button');
-    b.className = 'chip'; b.textContent = t; b.setAttribute('aria-pressed', t === typeFilter);
-    b.onclick = () => { typeFilter = t; store.set('kpop.type', t); renderTypes(); render(new Map(releases.map(r => [r.id, r]))); };
-    $('types').appendChild(b);
+function chips(id, items, current, onPick) {
+  $(id).innerHTML = '';
+  for (const [key, label] of items) {
+    const b = Object.assign(document.createElement('button'), { className: 'chip', textContent: label });
+    b.setAttribute('aria-pressed', key === current);
+    b.onclick = () => onPick(key);
+    $(id).appendChild(b);
   }
 }
-function showGroups() { $('groups').value = groups.join('\n'); $('groupCount').textContent = groups.length; }
+function renderTypes() { chips('types', TYPES.map(t => [t, t]), typeFilter, t => { typeFilter = t; store.set('kpop.type', t); renderTypes(); render(); }); }
+function renderScopes() { chips('scopes', Object.entries(SCOPES), scope, s => { scope = s; store.set('kpop.scope', s); renderScopes(); render(); }); }
+function showGroups() { $('groups').value = groups.join('\n'); $('groupCount').textContent = groups.length; checkGroups(); }
 
-$('q').oninput = () => render(new Map(releases.map(r => [r.id, r])));
+// Prüft „Meine Gruppen“ gegen alle Gruppen/Künstler, die KPOP OFFICIAL kennt
+let knownNames = null;
+async function loadKnownNames() {
+  const c = store.get('kpop.known', null);
+  if (c?.list?.length && Date.now() - c.at < 7 * 864e5) return c.list;
+  const list = [];
+  for (const tax of ['group', 'artist_solo']) {
+    let page = 1, pages = 1;
+    do {
+      const r = await kpo(`${tax}?per_page=100&page=${page}&_fields=name`);
+      pages = r.pages; list.push(...r.data.map(t => decode(t.name)));
+    } while (++page <= pages);
+  }
+  store.set('kpop.known', { at: Date.now(), list });
+  return list;
+}
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function checkGroups() {
+  const box = $('groupCheck');
+  if (!knownNames) { box.textContent = ''; return; }
+  const known = new Set(knownNames.flatMap(nameVariants));
+  const bad = groups.filter(g => !nameVariants(g).some(v => known.has(v)));
+  box.innerHTML = '';
+  if (!bad.length) { box.textContent = '✅ Alle Gruppen erkannt.'; return; }
+  for (const g of bad) {
+    const n = norm(g);
+    let tip = '', best = Infinity;   // ähnlichster bekannter Name (Tippfehler-Abstand)
+    for (const k of knownNames) {
+      const m = k.match(/^(.*?)\s*\((.*)\)\s*$/);   // „DK X SEUNGKWAN (SEVENTEEN)“ → auch „SEVENTEEN“
+      for (const raw of m ? [k, m[1], ...m[2].split(/,|\//)] : [k]) {
+        const d = editDistance(n, norm(raw));
+        if (d < best) { best = d; tip = raw.trim(); }
+      }
+    }
+    if (best > Math.max(2, Math.floor(n.length / 3))) tip = '';
+    box.appendChild(Object.assign(document.createElement('div'), { className: 'err',
+      textContent: `⚠️ „${g}“ unbekannt` + (tip ? ` – meintest du „${tip}“?` : ' – Schreibweise prüfen.') }));
+  }
+}
+
+$('q').oninput = () => render();
 $('reload').onclick = load;
 $('saveGroups').onclick = () => {
   groups = [...new Set($('groups').value.split('\n').map(s => s.trim()).filter(Boolean))];
-  store.set('kpop.groups', groups); showGroups(); load();
+  store.set('kpop.groups', groups); showGroups(); render();
 };
-$('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); showGroups(); };
+$('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); showGroups(); render(); };
 
-// ================= Konzerte in Deutschland (Ticketmaster) =================
+// ================= Konzerte in Deutschland =================
 const TM = 'https://app.ticketmaster.com/discovery/v2/events.json';
+const CITY_DE = { cologne: 'Köln', munich: 'München', nuremberg: 'Nürnberg', dusseldorf: 'Düsseldorf', frankfurt: 'Frankfurt am Main', hanover: 'Hannover' };
+const cityDE = c => CITY_DE[norm(c)] || c;
+const cityKey = c => norm(cityDE(c)).replace(/ammain$/, '');
 let tmKey = store.get('kpop.tmKey', '');
 let concerts = [];
 let tmLast = 0;
 
+// 1) KPOP OFFICIAL: Tourdaten mit „Germany“
+async function kpoConcerts() {
+  const out = [];
+  let page = 1, pages = 1;
+  do {
+    const r = await kpo(`event?search=germany&per_page=100&page=${page}&_embed=wp:featuredmedia&_fields=id,title,excerpt,link,_links,_embedded`);
+    pages = r.pages;
+    for (const e of r.data) {
+      const title = decode(e.title?.rendered), ex = strip(e.excerpt?.rendered);
+      const d = parseKpoDate(ex) || parseKpoDate(title);
+      if (!d || d.partial) continue;
+      const loc = (ex.split('📍')[1] || title.split(/\s[–—-]\s/).pop() || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (!loc.some(p => /^germany$/i.test(p)) && !/germany/i.test(title)) continue;
+      const parts = loc.filter(p => !/^germany$/i.test(p));
+      const city = cityDE(parts.pop() || '');
+      out.push({
+        id: 'kpo-' + e.id, name: title.replace(/\s[–—-]\s[^–—-]*Germany\s*$/i, ''), info: e.link, url: '',
+        artists: [], date: d.date, end: d.end, time: '', status: '', city, venue: parts.join(', '), onsale: ''
+      });
+    }
+  } while (++page <= pages);
+  return out;
+}
+
+// 2) Ticketmaster (optional)
 async function tm(params) {
   const wait = tmLast + 250 - Date.now();           // max. 5 Anfragen/Sekunde
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
@@ -390,7 +516,7 @@ async function tm(params) {
     apikey: tmKey, countryCode: 'DE', size: '200', sort: 'date,asc', locale: '*',
     startDateTime: today.toISOString().replace(/\.\d+Z$/, 'Z'), ...params });
   const res = await fetch(`${TM}?${qs}`);
-  if (res.status === 401) throw new Error('API-Key ungültig');
+  if (res.status === 401) throw new Error('Ticketmaster-Key ungültig');
   if (res.status === 429) { await new Promise(r => setTimeout(r, 1500)); return tm(params); }
   if (!res.ok) throw new Error(`Ticketmaster HTTP ${res.status}`);
   const data = await res.json();
@@ -405,60 +531,70 @@ function isKpopEvent(e) {
 }
 const wordRe = name => new RegExp(`(^|[^\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu');
 
-function toConcert(e, artistHint) {
+function toConcert(e) {
   const v = e._embedded?.venues?.[0] || {};
-  const img = (e.images || []).filter(i => i.ratio === '16_9').sort((a, b) => a.width - b.width)[0];
   const local = e.dates?.start?.localDate;
   if (!local) return null;
   return {
-    id: e.id, name: e.name, url: e.url,
+    id: e.id, name: e.name, url: e.url, info: '',
     artists: (e._embedded?.attractions || []).map(a => a.name),
-    artistHint,
-    date: new Date(local + 'T00:00:00'),
+    date: new Date(local + 'T00:00:00'), end: null,
     time: e.dates.start.noSpecificTime ? '' : (e.dates.start.localTime || '').slice(0, 5),
     status: e.dates?.status?.code || '',
-    venue: v.name || '', city: v.city?.name || '',
-    image: img?.url || '',
+    venue: v.name || '', city: cityDE(v.city?.name || ''),
     onsale: e.sales?.public?.startDateTime || ''
   };
 }
 
-async function loadConcerts() {
-  if (!tmKey) {
-    $('cstatus').textContent = 'Bitte zuerst einen Ticketmaster API-Key eintragen (siehe oben).';
-    $('keyDetails').open = true; $('concerts').innerHTML = ''; return;
+async function tmConcerts(onProgress) {
+  const out = new Map();
+  for (const params of [{ keyword: 'K-Pop' }, { keyword: 'KPOP' }]) {
+    for (const e of await tm(params)) { const c = toConcert(e); if (c && isKpopEvent(e)) out.set(c.id, c); }
   }
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i], want = new Set(nameVariants(g));
+    onProgress(`Ticketmaster: ${g} (${i + 1}/${groups.length}) …`);
+    for (const e of await tm({ keyword: g, classificationName: 'Music' })) {
+      const c = toConcert(e);
+      // nur exakte Künstler-Treffer (z. B. „TWICE“ nicht bei „Twice as Nice“)
+      if (c && (c.artists.some(a => nameVariants(a).some(n => want.has(n))) || (wordRe(g).test(c.name) && isKpopEvent(e))))
+        out.set(c.id, c);
+    }
+  }
+  return [...out.values()];
+}
+
+async function loadConcerts() {
   $('creload').disabled = true;
+  $('cstatus').textContent = 'Lade Tourdaten …';
   const found = new Map();
+  const key = c => c.date.toDateString() + '|' + cityKey(c.city);
+  const errors = [];
   try {
-    // 1) Allgemeine K-Pop-Suche
-    for (const params of [{ keyword: 'K-Pop' }, { keyword: 'KPOP' }]) {
-      $('cstatus').textContent = 'Suche K-Pop-Events …';
-      for (const e of await tm(params)) { const c = toConcert(e); if (c && isKpopEvent(e)) found.set(c.id, c); }
-      renderConcerts(found);
-    }
-    // 2) Jede Gruppe aus „Meine Gruppen“
-    for (let i = 0; i < groups.length; i++) {
-      const g = groups[i], want = norm(g);
-      $('cstatus').textContent = `Suche Konzerte: ${g} (${i + 1}/${groups.length}) …`;
-      for (const e of await tm({ keyword: g, classificationName: 'Music' })) {
-        const c = toConcert(e, g);
-        // nur exakte Künstler-Treffer (z. B. „TWICE“ nicht bei „Twice as Nice“)
-        if (c && (c.artists.some(a => norm(a) === want) || (wordRe(g).test(c.name) && isKpopEvent(e))))
-          found.set(c.id, c);
+    for (const c of await kpoConcerts()) found.set(key(c), c);
+    renderConcerts(found);
+  } catch (e) { errors.push(e.message); }
+  if (tmKey) {
+    try {
+      for (const c of await tmConcerts(t => $('cstatus').textContent = t)) {
+        const k = key(c), same = found.get(k);
+        if (same && same.id.startsWith('kpo-')) {   // gleicher Termin → Ticket-Link übernehmen
+          Object.assign(same, { url: c.url, time: same.time || c.time, status: c.status, onsale: c.onsale, venue: same.venue || c.venue });
+        } else if (!same) found.set(k + '|' + c.id, c);
       }
-      renderConcerts(found);
-    }
-    $('cstatus').textContent = `${found.size} Konzerte/Events in Deutschland gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}`;
-    store.set('kpop.ccache', { v: 2, at: Date.now(), list: [...found.values()] });
-  } catch (e) {
-    $('cstatus').innerHTML = `<span class="err">Fehler: ${e.message}</span>`;
-    if (/Key/.test(e.message)) $('keyDetails').open = true;
-  } finally { $('creload').disabled = false; }
+    } catch (e) { errors.push(e.message); }
+  }
+  renderConcerts(found);
+  $('cstatus').innerHTML = '';
+  $('cstatus').append(`${concerts.length} K-Pop-Konzerte in Deutschland · Stand ${new Date().toLocaleTimeString('de-DE')}`);
+  if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err', textContent: 'Fehler: ' + errors.join(' · ') }));
+  if (errors.some(e => /Key/.test(e))) $('keyDetails').open = true;
+  store.set('kpop.ccache', { v: 3, at: Date.now(), list: [...found.values()] });
+  $('creload').disabled = false;
 }
 
 function renderConcerts(map) {
-  concerts = [...map.values()].filter(c => c.date >= today).sort((a, b) => a.date - b.date || a.time.localeCompare(b.time));
+  if (map) concerts = [...map.values()].filter(c => (c.end || c.date) >= today).sort((a, b) => a.date - b.date || a.time.localeCompare(b.time));
   const q = $('cq').value.trim().toLowerCase();
   const list = concerts.filter(c => !q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q));
   const box = $('concerts'); box.innerHTML = '';
@@ -468,8 +604,8 @@ function renderConcerts(map) {
     const m = c.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
     if (m !== month) {
       month = m;
-      const h = document.createElement('div'); h.className = 'month'; h.textContent = m; box.appendChild(h);
-      grid = document.createElement('div'); grid.className = 'grid'; box.appendChild(grid);
+      box.appendChild(Object.assign(document.createElement('div'), { className: 'month', textContent: m }));
+      grid = box.appendChild(Object.assign(document.createElement('div'), { className: 'grid' }));
     }
     grid.appendChild(gigCard(c));
   }
@@ -487,31 +623,32 @@ function gigCard(c) {
     </div>`;
   const [wd, day, mon] = el.querySelectorAll('.datebox > *');
   wd.textContent = c.date.toLocaleDateString('de-DE', { weekday: 'short' });
-  day.textContent = c.date.getDate();
+  day.textContent = c.end ? `${c.date.getDate()}.–${c.end.getDate()}.` : c.date.getDate();
+  if (c.end) day.style.fontSize = '17px';
   mon.textContent = c.date.toLocaleDateString('de-DE', { month: 'short' });
   el.querySelector('.title').textContent = c.name; el.querySelector('.title').title = c.name;
   el.querySelector('.artist').textContent = `📍 ${[c.city, c.venue].filter(Boolean).join(' · ')}`;
   const meta = el.querySelector('.meta');
-  const badge = (t, cls = '') => { const b = document.createElement('span'); b.className = 'badge ' + cls; b.textContent = t; meta.appendChild(b); };
+  const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
+  const link = (href, t) => { const a = Object.assign(document.createElement('a'), { href, target: '_blank', rel: 'noopener', className: 'badge', textContent: t }); meta.appendChild(a); };
   if (c.time) badge(`${c.time} Uhr`);
   badge(relDays(c.date), 'soon');
   if (STATUS[c.status]) badge(...STATUS[c.status]);
   else if (c.onsale && new Date(c.onsale) > new Date())
     badge(`VVK ab ${new Date(c.onsale).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}`, 'warn');
-  if (c.url) {
-    const a = document.createElement('a'); a.href = c.url; a.target = '_blank'; a.rel = 'noopener';
-    a.className = 'badge'; a.textContent = 'Tickets ↗'; meta.appendChild(a);
-  }
+  if (c.url) link(c.url, 'Tickets ↗');
+  if (c.info) link(c.info, c.url ? 'Infos ↗' : 'Infos & Tickets ↗');
   return el;
 }
 
-$('cq').oninput = () => renderConcerts(new Map(concerts.map(c => [c.id, c])));
+$('cq').oninput = () => renderConcerts();
 $('creload').onclick = loadConcerts;
 $('tmKey').value = tmKey;
 $('saveKey').onclick = () => { tmKey = $('tmKey').value.trim(); store.set('kpop.tmKey', tmKey); $('keyDetails').open = false; loadConcerts(); };
 
 // --- Tabs ---
 let concertsLoaded = false;
+const revive = list => list.map(x => ({ ...x, date: new Date(x.date), end: x.end ? new Date(x.end) : null }));
 function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
   $('tab-releases').hidden = name !== 'releases';
@@ -519,19 +656,20 @@ function showTab(name) {
   store.set('kpop.tab', name);
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
-    const cc = store.get('kpop.ccache', null)?.v === 2 ? store.get('kpop.ccache') : null;
-    if (cc && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(cc.list.map(c => [c.id, { ...c, date: new Date(c.date) }])));
+    const cc = store.get('kpop.ccache', null);
+    if (cc?.v === 3 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
     loadConcerts();
   }
 }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
-showTab(store.get('kpop.tab', 'releases'));
 
-renderTypes(); showGroups();
+renderTypes(); renderScopes(); showGroups();
+loadKnownNames().then(l => { knownNames = l; checkGroups(); }).catch(() => {});
+showTab(store.get('kpop.tab', 'releases'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
-const cache = store.get('kpop.cache', null)?.v === 2 ? store.get('kpop.cache') : null;
-if (cache && Date.now() - cache.at < 6 * 36e5) {
-  render(new Map(cache.list.map(r => [r.id, { ...r, date: new Date(r.date) }])));
+const cache = store.get('kpop.cache', null);
+if (cache?.v === 3 && Date.now() - cache.at < 6 * 36e5) {
+  render(new Map(revive(cache.list).map(r => [r.id, r])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
 }
 load();
