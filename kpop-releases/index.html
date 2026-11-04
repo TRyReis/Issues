@@ -208,7 +208,8 @@
     <div class="filters" id="cfilters"></div>
     <div id="concerts"></div>
     <footer>
-      Daten: <a href="https://kpopofficial.com" target="_blank" rel="noopener">KPOP OFFICIAL</a>
+      Daten: <a href="https://kpopofficial.com" target="_blank" rel="noopener">KPOP OFFICIAL</a>,
+      <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> (Tourseiten großer K-Pop-Tourneen)
       und (mit Key) <a href="https://developer.ticketmaster.com" target="_blank" rel="noopener">Ticketmaster</a>.
       Termine bitte vor dem Ticketkauf beim Veranstalter prüfen.
     </footer>
@@ -542,7 +543,14 @@ function kpopCheck(kpoNames) {
 }
 
 // MusicBrainz: Ist der Künstler (exakter Name, nicht japanisch) als k-pop getaggt? Ergebnis 30 Tage gemerkt.
+// Bereits geprüfte Künstler (Stand 04.11.2026), damit der erste Start nicht ~1 Minute prüfen muss.
+// „POW“: K-Pop-Boygroup, bei MusicBrainz aber mit einem gleichnamigen anderen Künstler verwechselt.
+const MB_SEED_AT = new Date(2026, 10, 4).getTime();
+const MB_SEED = { ok: ["ARTMS", "AleXa", "BOL4", "CHUU", "CLOSE YOUR EYES", "DKB", "DXMON", "GUMMY", "KEYVITUP", "Keyveatz", "LIGHTSUM", "N.Top", "NAVILLERA", "POW", "Rothy", "UNCHILD", "Xdinary Heroes", "YUHZ", "can’t be blue", "idntt"],
+  no: ["CATCH THE YOUNG", "CHANMINA", "CNBLUE", "Coogie", "Dragon Pony", "Hi-Fi Un!corn", "Jeong Dong Won", "KACHISAN", "KIK", "LEE BYEONGCHAN", "LUCY", "Park Ji Hyeon", "Paul Kim", "Roy Kim", "TOUCHED", "Yoon Jong Shin"] };
 let mbGenre = store.get('kpop.mbGenre', {});
+for (const [list, ok] of [[MB_SEED.ok, true], [MB_SEED.no, false]])
+  for (const n of list) if (!mbGenre[n] || mbGenre[n].at < MB_SEED_AT) mbGenre[n] = { ok, at: MB_SEED_AT };
 async function mbIsKpop(name) {
   const c = mbGenre[name];
   if (c && Date.now() - c.at < 30 * 864e5) return c.ok;
@@ -1410,22 +1418,24 @@ function wikiGermanyRows(html, pageTitle, artist) {
   doc.querySelectorAll('sup, .reference, style').forEach(e => e.remove());
   const out = [];
   const headings = [...doc.querySelectorAll('h2, h3, h4')];
+  let lastYear = null;   // Tabellen ohne Jahr (z. B. „Cancelled shows“) übernehmen das Jahr der vorherigen Tabelle
   for (const table of doc.querySelectorAll('table.wikitable')) {
     const grid = tableGrid(table);
-    const hi = grid.findIndex(r => r?.some(c => /^date/i.test(c.text)) && r.some(c => /^(city|country|venue|location)/i.test(c.text)));
+    const hi = grid.findIndex(r => r?.some(c => c && /^date/i.test(c.text)) && r.some(c => c && /^(city|country|venue|location)/i.test(c.text)));
     if (hi < 0) continue;
-    const head = grid[hi].map(c => c.text.toLowerCase());
+    const head = [...grid[hi]].map(c => (c?.text || '').toLowerCase());
     const col = n => head.findIndex(h => h.startsWith(n));
     const iDate = col('date'), iCity = col('city'), iCountry = col('country'), iVenue = col('venue'), iLoc = col('location');
     // Abgesagte/verschobene Termine stehen in eigenen Tabellen oder unter eigener Überschrift
     const prevHeading = headings.filter(h => h.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).pop()?.textContent || '';
     const caption = table.caption?.textContent || '';
     const cancelled = /cancel|postpon/i.test(caption + ' ' + prevHeading) || head.some(h => /^reason/.test(h));
-    let year = +((caption.match(/\b(20\d\d)\b/) || prevHeading.match(/\b(20\d\d)\b/) || [])[1]) || null;
+    let year = +((caption.match(/\b(20\d\d)\b/) || prevHeading.match(/\b(20\d\d)\b/) || [])[1]) || lastYear;
     for (let r = hi + 1; r < grid.length; r++) {
-      const row = grid[r]; if (!row?.length) continue;
-      if (row.every(c => c.el === row[0].el)) {           // Trennzeile über alle Spalten, z. B. „2027“ oder „Europe“
-        const y = row[0].text.match(/\b(20\d\d)\b/); if (y) year = +y[1];
+      const row = grid[r]; const cells = (row || []).filter(Boolean);   // Zeilen können Lücken haben
+      if (!cells.length) continue;
+      if (cells.every(c => c.el === cells[0].el)) {       // Trennzeile über alle Spalten, z. B. „2027“ oder „Europe“
+        const y = cells[0].text.match(/\b(20\d\d)\b/); if (y) year = +y[1];
         continue;
       }
       const country = iCountry >= 0 ? row[iCountry]?.text || '' : '';
@@ -1433,6 +1443,7 @@ function wikiGermanyRows(html, pageTitle, artist) {
       if (!/\bgermany\b/i.test(iCountry >= 0 ? country : where)) continue;
       const d = wikiDate(row[iDate]?.text || '', year);
       if (!d) continue;
+      lastYear = d.date.getFullYear();
       let city = iCity >= 0 ? row[iCity]?.text : (row[iLoc]?.text || '').split(',')[0];
       city = cityDE((city || '').replace(/,?\s*Germany$/i, '').trim());
       out.push({
@@ -1464,7 +1475,7 @@ async function wikiConcerts(onProgress) {
   const intros = await wikiIntros(unique);
   const tours = unique.map(t => [t, wikiArtist(intros.get(t) || '', display)]).filter(([, a]) => a);
   const out = [];
-  let done = 0;
+  let done = 0, failed = 0;
   await Promise.all(tours.map(async ([title, artist]) => {
     try {
       const d = await wiki({ action: 'parse', page: title, prop: 'text', redirects: '1' });
@@ -1472,10 +1483,10 @@ async function wikiConcerts(onProgress) {
         if (artist.tribute) { row.name = `${title} (Tribute-Show)`; row.tribute = true; row.artists = []; }
         out.push(row);
       }
-    } catch (e) { console.warn('Wikipedia', title, e.message); }
+    } catch (e) { failed++; console.warn('Wikipedia', title, e.message); }
     onProgress(`Wikipedia: Tourseiten ${++done}/${tours.length} …`);
   }));
-  store.set('kpop.wikiConc', { v: 2, at: Date.now(), list: out });
+  if (!failed) store.set('kpop.wikiConc', { v: 2, at: Date.now(), list: out });   // unvollständig → nicht merken
   return out;
 }
 
@@ -1545,7 +1556,7 @@ async function loadConcerts() {
   try {
     for (const c of await kpoConcerts()) found.set(key(c), c);
     renderConcerts(found);
-  } catch (e) { errors.push(e.message); }
+  } catch (e) { errors.push('KPOP OFFICIAL nicht erreichbar'); console.warn(e); }
   try {
     for (const c of await wikiConcerts(t => $('cstatus').textContent = t)) {
       const k = key(c), same = found.get(k);
@@ -1553,7 +1564,7 @@ async function loadConcerts() {
       else found.set(k, c);
     }
     renderConcerts(found);
-  } catch (e) { errors.push(e.message); }
+  } catch (e) { errors.push('Wikipedia nicht erreichbar'); console.warn(e); }
   if (tmKey) {
     try {
       for (const c of await tmConcerts(t => $('cstatus').textContent = t)) {
@@ -1567,7 +1578,8 @@ async function loadConcerts() {
   renderConcerts(found);
   $('cstatus').innerHTML = '';
   $('cstatus').append(`${concerts.length} K-Pop-Konzerte in Deutschland · Stand ${new Date().toLocaleTimeString('de-DE')}`);
-  if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err', textContent: 'Fehler: ' + errors.join(' · ') }));
+  if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err',
+    textContent: '⚠️ ' + errors.join(' · ') + ' – Termine von dort fehlen gerade. Später „Aktualisieren“ tippen.' }));
   if (errors.some(e => /Key/.test(e))) $('keyDetails').open = true;
   store.set('kpop.ccache', { v: 4, at: Date.now(), list: [...found.values()] });
   $('creload').disabled = false;
