@@ -4,7 +4,11 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.view.View;
+import android.view.Window;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -31,6 +35,15 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false);
+
+        // Die Web-App meldet über window.KpopApp.setDarkMode(...) das gewählte Design,
+        // damit Status- und Navigationsleiste farblich passen.
+        web.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void setDarkMode(final boolean dark) {
+                runOnUiThread(() -> applySystemBars(dark));
+            }
+        }, "KpopApp");
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -62,6 +75,22 @@ public class MainActivity extends Activity {
         if (state == null || web.restoreState(state) == null) {
             web.loadUrl("https://" + HOST + "/index.html");
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void applySystemBars(boolean dark) {
+        int bg = dark ? Color.parseColor("#141218") : Color.parseColor("#FAF8FC");
+        Window w = getWindow();
+        w.setStatusBarColor(bg);
+        w.setNavigationBarColor(bg);
+        web.setBackgroundColor(bg);
+        View decor = w.getDecorView();
+        int flags = decor.getSystemUiVisibility();
+        flags = dark ? (flags & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) : (flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            flags = dark ? (flags & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) : (flags | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        }
+        decor.setSystemUiVisibility(flags);
     }
 
     private static String mime(String path) {

@@ -8,17 +8,32 @@
   :root {
     --bg: #faf8fc; --card: #ffffff; --text: #1d1a24; --muted: #6b6578;
     --line: #e7e2ef; --accent: #c2185b; --accent-soft: #fce4ef; --soon: #0b7a5a; --soon-soft: #dff5ec;
+    --warn: #fff3cd; --warn-text: #8a6100; color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #141218; --card: #1e1b24; --text: #f2eff7; --muted: #a59fb3;
       --line: #2f2a38; --accent: #f06292; --accent-soft: #3a1f2c; --soon: #4cd3a5; --soon-soft: #15342a;
+      --warn: #3b3016; --warn-text: #f3c969; color-scheme: dark;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141218; --card: #1e1b24; --text: #f2eff7; --muted: #a59fb3;
+    --line: #2f2a38; --accent: #f06292; --accent-soft: #3a1f2c; --soon: #4cd3a5; --soon-soft: #15342a;
+    --warn: #3b3016; --warn-text: #f3c969; color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding: 24px 16px 8px; max-width: 980px; margin: 0 auto; }
+  header { padding: 24px 16px 8px; max-width: 980px; margin: 0 auto;
+           display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; justify-content: space-between; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; border-radius: 0; padding: 6px 11px; background: none; color: var(--muted); }
+  .seg button[aria-pressed=true] { background: var(--accent); color: #fff; }
+  .filters { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px 14px 12px; margin-bottom: 8px; }
+  .frow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+  .frow > b { width: 100%; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .chip { padding: 6px 12px; }
   h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; }
   .sub { color: var(--muted); margin: 4px 0 0; }
   main { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; }
@@ -45,7 +60,7 @@
                   background: var(--accent-soft); color: var(--accent); padding: 8px 0; line-height: 1.15; }
   .gig .datebox b { display: block; font-size: 24px; }
   .gig .datebox small { font-size: 12px; text-transform: uppercase; }
-  .badge.warn { background: #fff3cd; color: #8a6100; }
+  .badge.warn { background: var(--warn); color: var(--warn-text); }
   .month { font-size: 14px; color: var(--muted); margin: 18px 0 8px; text-transform: capitalize; }
   h2 { font-size: 18px; margin: 28px 0 10px; display: flex; gap: 8px; align-items: baseline; }
   h2 .count { color: var(--muted); font-weight: 400; font-size: 14px; }
@@ -75,8 +90,15 @@
 </head>
 <body>
 <header>
-  <h1>🎤 K-Pop Release Radar</h1>
-  <p class="sub" id="range"></p>
+  <div>
+    <h1>🎤 K-Pop Release Radar</h1>
+    <p class="sub" id="range"></p>
+  </div>
+  <div class="seg" id="theme" role="group" aria-label="Design">
+    <button data-theme="system" title="Wie System">📱 Auto</button>
+    <button data-theme="light" title="Hell">☀️ Hell</button>
+    <button data-theme="dark" title="Dunkel">🌙 Dunkel</button>
+  </div>
 </header>
 <main>
   <nav class="tabs" role="tablist">
@@ -85,16 +107,17 @@
   </nav>
   <div id="tab-releases">
   <div class="toolbar">
-    <input type="search" id="q" placeholder="Gruppe oder Titel filtern …" aria-label="Filter">
-    <span id="scopes"></span>
-    <span id="types"></span>
+    <input type="search" id="q" placeholder="Artist oder Titel suchen …" aria-label="Suche">
+    <button id="filterBtn" aria-expanded="false">⚙️ Filter</button>
     <button id="reload" class="primary">↻ Aktualisieren</button>
   </div>
 
+  <div class="filters" id="filters" hidden></div>
+
   <details>
     <summary>Meine Gruppen (<span id="groupCount">0</span>)</summary>
-    <p class="sub">Eine Gruppe pro Zeile. Bei „Meine Gruppen“ werden nur Releases dieser Gruppen
-      (inkl. Solo-Releases ihrer Mitglieder) angezeigt, bei „Alle K-Pop“ alle.</p>
+    <p class="sub">Eine Gruppe pro Zeile. Releases dieser Gruppen (und Solo-Releases ihrer Mitglieder)
+      werden mit ★ markiert; im Filter „Nur meine Gruppen“ werden nur sie angezeigt.</p>
     <textarea id="groups" spellcheck="false"></textarea>
     <div id="groupCheck" class="sub"></div>
     <button id="saveGroups" class="primary">Speichern</button>
@@ -114,7 +137,7 @@
 
   <footer>
     Daten: <a href="https://kpopofficial.com/kpop-comebacks/" target="_blank" rel="noopener">KPOP OFFICIAL – Comeback-Kalender</a>.
-    Datum = offizielles Release-Datum in Korea (KST), „bei uns“ = deutsche Uhrzeit.
+    Alle K-Pop-Artists inkl. Solo-Releases. Datum = offizielles Release-Datum in Korea (KST), „bei uns“ = deutsche Uhrzeit.
     Karte antippen für die Tracklist.
   </footer>
   </div>
@@ -156,8 +179,16 @@ const DEFAULT_GROUPS = [
   'THE BOYZ','fromis_9','STAYC','Kep1er','xikers','P1Harmony','MEOVV','izna','KickFlip',
   'Hearts2Hearts','HEART OF WOMAN','tripleS','RESCENE','TREASURE','NCT WISH'
 ];
-const TYPES = ['Alle', 'Album', 'EP', 'Single'];
-const SCOPES = { mine: 'Meine Gruppen', all: 'Alle K-Pop' };
+// Filter: [Schlüssel, Überschrift, [[Wert, Beschriftung], …]]
+const FILTERS = [
+  ['scope', 'Auswahl', [['all', 'Alle K-Pop-Artists'], ['mine', '★ Nur meine Gruppen']]],
+  ['kind', 'Artist', [['all', 'Alle'], ['group', 'Gruppen'], ['solo', 'Solo']]],
+  ['type', 'Art', [['all', 'Alle'], ['Album', 'Album'], ['EP', 'EP / Mini'], ['Single', 'Single'], ['OST', 'OST']]],
+  ['days', 'Zeitraum', [['0', 'Alles'], ['7', '± 7 Tage'], ['14', '± 14 Tage']]],
+  ['japan', 'Japan-Releases', [['show', 'Anzeigen'], ['hide', 'Ausblenden']]],
+  ['pre', 'Pre-Releases', [['show', 'Anzeigen'], ['hide', 'Ausblenden']]],
+];
+const DEFAULT_FILTERS = Object.fromEntries(FILTERS.map(([k, , opts]) => [k, opts[0][0]]));
 const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
 const $ = id => document.getElementById(id);
@@ -172,8 +203,7 @@ const from = addDays(today, -DAYS_BACK), to = addDays(today, DAYS_AHEAD);
 const fmt = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 
 let groups = store.get('kpop.groups', DEFAULT_GROUPS);
-let typeFilter = store.get('kpop.type', 'Alle');
-let scope = store.get('kpop.scope', 'mine');
+let filters = { ...DEFAULT_FILTERS, ...store.get('kpop.filters', {}) };
 let releases = [];
 
 $('range').textContent = `Releases vom ${fmt.format(from)} bis ${fmt.format(to)}`;
@@ -246,8 +276,9 @@ function parseRelease(x) {
   const left = dash > 0 ? fullTitle.slice(0, dash) : '';
   const title = dash > 0 ? fullTitle.slice(dash + 3).trim() : fullTitle;
 
-  const groupNames = tax('group').map(t => decode(t.name));
-  const soloNames = tax('artist_solo').map(t => decode(t.name));
+  const clean = n => decode(n).replace(/[\u274C\u2705\u2B50\u2728]/gu, '').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
+  const groupNames = tax('group').map(t => clean(t.name));
+  const soloNames = tax('artist_solo').map(t => clean(t.name));
   const artist = (groupNames.length ? groupNames : soloNames).join(' × ') || left || 'Unbekannt';
   const typeSlugs = tax('album-type').map(t => t.slug);
   const type = typeSlugs.includes('full-album') ? 'Album' : typeSlugs.includes('ep') ? 'EP'
@@ -262,6 +293,7 @@ function parseRelease(x) {
     id: x.id, title, artist, type, label, link: x.link,
     solo: !groupNames.length,
     japan: typeSlugs.includes('japanese-album'), ost: typeSlugs.includes('ost'),
+    pre: /pre-?release/i.test(left),
     names: [...groupNames, ...soloNames].flatMap(nameVariants),
     date: d.date, partial: d.partial, timeDE: d.partial ? '' : kstToGerman(d.date, excerpt),
     cover: (sizes.thumbnail || sizes.medium || media)?.source_url || ''
@@ -286,9 +318,8 @@ async function load() {
       } while (++page <= pages);
     }
     render(found);
-    const shown = releases.filter(inScope).length;
-    $('status').textContent = `${shown} Releases` + (scope === 'mine' ? ` deiner Gruppen (${found.size} K-Pop-Releases insgesamt)` : '') +
-      ` · Stand ${new Date().toLocaleTimeString('de-DE')}`;
+    loadedAt = new Date();
+    updateStatus();
     store.set('kpop.cache', { v: 3, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
@@ -298,19 +329,33 @@ async function load() {
 }
 
 // --- Darstellung ---
-const mineSet = () => new Set(groups.flatMap(nameVariants));
-function inScope(r) {
-  if (scope === 'all') return true;
-  const mine = mineSet();
-  return r.names.some(n => mine.has(n));
+let loadedAt = null, shownCount = 0;
+let mine = new Set(groups.flatMap(nameVariants));
+const isMine = r => r.names.some(n => mine.has(n));
+
+function passes(r) {
+  const f = filters, days = +f.days;
+  if (f.scope === 'mine' && !isMine(r)) return false;
+  if (f.kind === 'group' && r.solo) return false;
+  if (f.kind === 'solo' && !r.solo) return false;
+  if (f.type !== 'all' && !(r.type === f.type || (f.type === 'OST' && r.ost))) return false;
+  if (days && Math.abs(r.date - today) > days * 864e5) return false;
+  if (f.japan === 'hide' && r.japan) return false;
+  if (f.pre === 'hide' && r.pre) return false;
+  return true;
+}
+
+function updateStatus() {
+  if (!loadedAt) return;
+  $('status').textContent = `${shownCount} von ${releases.length} K-Pop-Releases angezeigt · Stand ${loadedAt.toLocaleTimeString('de-DE')}`;
 }
 
 function render(map) {
   if (map) releases = [...map.values()];
   const q = $('q').value.trim().toLowerCase();
-  const list = releases.filter(r => inScope(r) &&
-    (typeFilter === 'Alle' || r.type === typeFilter) &&
+  const list = releases.filter(r => passes(r) &&
     (!q || r.title.toLowerCase().includes(q) || r.artist.toLowerCase().includes(q)));
+  shownCount = list.length; updateStatus();
   const up = list.filter(r => r.date > today).sort((a, b) => a.date - b.date);
   const recent = list.filter(r => r.date <= today).sort((a, b) => b.date - a.date);
   fill('upcoming', up, 'Keine angekündigten Releases gefunden.');
@@ -356,6 +401,7 @@ function card(r) {
   el.querySelector('.artist').textContent = r.artist;
   const meta = el.querySelector('.meta');
   const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
+  if (isMine(r)) badge('★', 'soon');
   badge(r.label);
   if (r.solo) badge('Solo', 'plain');
   if (r.japan) badge('🇯🇵 Japan', 'plain');
@@ -413,8 +459,44 @@ function chips(id, items, current, onPick) {
     $(id).appendChild(b);
   }
 }
-function renderTypes() { chips('types', TYPES.map(t => [t, t]), typeFilter, t => { typeFilter = t; store.set('kpop.type', t); renderTypes(); render(); }); }
-function renderScopes() { chips('scopes', Object.entries(SCOPES), scope, s => { scope = s; store.set('kpop.scope', s); renderScopes(); render(); }); }
+function renderFilters() {
+  const box = $('filters'); box.innerHTML = '';
+  for (const [key, label, opts] of FILTERS) {
+    const row = box.appendChild(Object.assign(document.createElement('div'), { className: 'frow' }));
+    row.appendChild(Object.assign(document.createElement('b'), { textContent: label }));
+    for (const [val, text] of opts) {
+      const b = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: text }));
+      b.setAttribute('aria-pressed', filters[key] === val);
+      b.onclick = () => { filters[key] = val; store.set('kpop.filters', filters); renderFilters(); render(); };
+    }
+  }
+  const active = FILTERS.filter(([k]) => filters[k] !== DEFAULT_FILTERS[k]).length;
+  if (active) {
+    const row = box.appendChild(Object.assign(document.createElement('div'), { className: 'frow' }));
+    const reset = row.appendChild(Object.assign(document.createElement('button'), { textContent: '✕ Filter zurücksetzen' }));
+    reset.onclick = () => { filters = { ...DEFAULT_FILTERS }; store.set('kpop.filters', filters); renderFilters(); render(); };
+  }
+  $('filterBtn').textContent = active ? `⚙️ Filter (${active})` : '⚙️ Filter';
+  $('filterBtn').classList.toggle('primary', !!active);
+}
+$('filterBtn').onclick = () => {
+  const box = $('filters'); box.hidden = !box.hidden;
+  $('filterBtn').setAttribute('aria-expanded', !box.hidden);
+};
+
+// --- Design: Auto / Hell / Dunkel ---
+let theme = store.get('kpop.theme', 'system');
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  if (theme === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  document.querySelectorAll('#theme button').forEach(b => b.setAttribute('aria-pressed', b.dataset.theme === theme));
+  const dark = theme === 'dark' || (theme === 'system' && darkQuery.matches);
+  try { window.KpopApp?.setDarkMode(dark); } catch {}   // Android: Statusleiste anpassen
+}
+document.querySelectorAll('#theme button').forEach(b => b.onclick = () => { theme = b.dataset.theme; store.set('kpop.theme', theme); applyTheme(); });
+darkQuery.addEventListener?.('change', applyTheme);
+applyTheme();
 function showGroups() { $('groups').value = groups.join('\n'); $('groupCount').textContent = groups.length; checkGroups(); }
 
 // Prüft „Meine Gruppen“ gegen alle Gruppen/Künstler, die KPOP OFFICIAL kennt
@@ -470,9 +552,9 @@ $('q').oninput = () => render();
 $('reload').onclick = load;
 $('saveGroups').onclick = () => {
   groups = [...new Set($('groups').value.split('\n').map(s => s.trim()).filter(Boolean))];
-  store.set('kpop.groups', groups); showGroups(); render();
+  store.set('kpop.groups', groups); mine = new Set(groups.flatMap(nameVariants)); showGroups(); render();
 };
-$('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); showGroups(); render(); };
+$('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); mine = new Set(groups.flatMap(nameVariants)); showGroups(); render(); };
 
 // ================= Konzerte in Deutschland =================
 const TM = 'https://app.ticketmaster.com/discovery/v2/events.json';
@@ -663,7 +745,7 @@ function showTab(name) {
 }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
 
-renderTypes(); renderScopes(); showGroups();
+renderFilters(); showGroups();
 loadKnownNames().then(l => { knownNames = l; checkGroups(); }).catch(() => {});
 showTab(store.get('kpop.tab', 'releases'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden

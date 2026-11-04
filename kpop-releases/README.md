@@ -8,8 +8,10 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 ## Funktionen
 - **Demnächst**: angekündigte Comebacks (bis ca. 5 Monate im Voraus), inkl. deutscher Uhrzeit
 - **Neu erschienen**: Releases der letzten 30 Tage, neueste zuerst
-- „Meine Gruppen“ (inkl. Solo-Releases der Mitglieder) oder „Alle K-Pop“
-- Filter nach Album / EP / Single und Suche nach Gruppe oder Titel
+- Alle K-Pop-Artists inkl. Solo-Releases; Releases von „Meine Gruppen“ (und ihren Mitgliedern) mit ★ markiert
+- Filter: Nur meine Gruppen · Gruppen/Solo · Album/EP/Single/OST · Zeitraum ±7/±14 Tage ·
+  Japan-Releases und Pre-Releases ein-/ausblenden · Suche nach Artist oder Titel
+- Design: Auto (wie System) / Hell / Dunkel
 - Karte antippen → Tracklist (Titelsong mit ★)
 - Gruppenliste wird geprüft: unbekannte/falsch geschriebene Namen werden mit Vorschlag markiert
 
