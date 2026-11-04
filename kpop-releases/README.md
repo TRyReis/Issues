@@ -34,7 +34,7 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 
 ## Konzerte in Deutschland (Tab „Konzerte“)
 - Alle angekündigten K-Pop-Konzerte in Deutschland ab heute, nach Monat gruppiert
-- Optionale Filter: Stadt (Auswahlliste), „Nur meine Gruppen“, „Nur Konzerte“ (ohne Fan-Events/Festivals),
+- Optionale Filter (werden gespeichert): Stadt (Auswahlliste), „Nur meine Gruppen“, „Nur Konzerte“ (ohne Fan-Events/Festivals),
   Tribute-Shows ausblenden (Standard: alles)
 - Nur K-Pop-Künstler (gleiche Prüfung wie bei den Releases); doppelte Termine aus mehreren Quellen werden zusammengeführt
 - Ohne Key: K-Pop-Tourkalender von Radio:Active / KPOP IN GERMANY (alle Deutschland-Termine inkl. kleinerer

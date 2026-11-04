@@ -547,8 +547,9 @@ function kpopCheck(kpoNames) {
 // MusicBrainz: Ist der Künstler (exakter Name, nicht japanisch) als k-pop getaggt? Ergebnis 30 Tage gemerkt.
 // Bereits geprüfte Künstler (Stand 04.11.2026), damit der erste Start nicht ~1 Minute prüfen muss.
 // „POW“: K-Pop-Boygroup, bei MusicBrainz aber mit einem gleichnamigen anderen Künstler verwechselt.
+// „ZELO“, „NTX“: bei der Konzertprüfung am 04.11.2026 von MusicBrainz als k-pop bestätigt.
 const MB_SEED_AT = new Date(2026, 10, 4).getTime();
-const MB_SEED = { ok: ["ARTMS", "AleXa", "BOL4", "CHUU", "CLOSE YOUR EYES", "DKB", "DXMON", "GUMMY", "KEYVITUP", "Keyveatz", "LIGHTSUM", "N.Top", "NAVILLERA", "POW", "Rothy", "UNCHILD", "Xdinary Heroes", "YUHZ", "can’t be blue", "idntt"],
+const MB_SEED = { ok: ["ARTMS", "AleXa", "BOL4", "CHUU", "CLOSE YOUR EYES", "DKB", "DXMON", "GUMMY", "KEYVITUP", "Keyveatz", "LIGHTSUM", "N.Top", "NAVILLERA", "NTX", "POW", "Rothy", "UNCHILD", "Xdinary Heroes", "YUHZ", "ZELO", "can’t be blue", "idntt"],
   no: ["CATCH THE YOUNG", "CHANMINA", "CNBLUE", "Coogie", "Dragon Pony", "Hi-Fi Un!corn", "Jeong Dong Won", "KACHISAN", "KIK", "LEE BYEONGCHAN", "LUCY", "Park Ji Hyeon", "Paul Kim", "Roy Kim", "TOUCHED", "Yoon Jong Shin"] };
 let mbGenre = store.get('kpop.mbGenre', {});
 for (const [list, ok] of [[MB_SEED.ok, true], [MB_SEED.no, false]])
@@ -687,14 +688,22 @@ function deezer(path) {
 
 // MusicBrainz (max. 1 Anfrage pro Sekunde)
 const MB = 'https://musicbrainz.org/ws/2';
-let mbLast = 0;
+let mbLast = 0, mbFails = 0;
+// max. 1 Anfrage/s, 10 s Zeitlimit je Anfrage; nach 3 Fehlschlägen in Folge gilt MusicBrainz in dieser Sitzung als
+// nicht erreichbar (sonst würde die App bei jedem Künstler erneut warten)
 async function mb(path, tries = 3) {
+  if (mbFails >= 3) throw new Error('MusicBrainz nicht erreichbar');
   const wait = mbLast + 1100 - Date.now();
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
   mbLast = Date.now();
-  const res = await fetch(`${MB}/${path}${path.includes('?') ? '&' : '?'}fmt=json`, { headers: { Accept: 'application/json' } });
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 10000);
+  let res;
+  try { res = await fetch(`${MB}/${path}${path.includes('?') ? '&' : '?'}fmt=json`, { headers: { Accept: 'application/json' }, signal: ctrl.signal }); }
+  catch (e) { mbFails++; throw new Error('MusicBrainz nicht erreichbar'); }
+  finally { clearTimeout(timer); }
   if (res.status === 503 && tries > 1) { await sleep(2000); return mb(path, tries - 1); }
-  if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
+  if (!res.ok) { mbFails++; throw new Error(`MusicBrainz HTTP ${res.status}`); }
+  mbFails = 0;
   return res.json();
 }
 const KPOP_TAGS = new Set(['kpop', 'koreanpop', 'kpopidol', 'koreanidol']);
@@ -1539,7 +1548,7 @@ function parseRtc(html) {
 
 async function rtcConcerts(onProgress) {
   const c = store.get('kpop.rtcConc', null);
-  let list = c?.v === 2 && Date.now() - c.at < 6 * 36e5 ? c.list.map(x => ({ ...x, date: new Date(x.date) })) : null;
+  let list = c?.v === 3 && Date.now() - c.at < 6 * 36e5 ? c.list.map(x => ({ ...x, date: new Date(x.date) })) : null;
   if (!list) {
     onProgress('Lade K-Pop-Tourkalender (Radio:Active) …');
     let lastErr;
@@ -1552,28 +1561,40 @@ async function rtcConcerts(onProgress) {
       } catch (e) { lastErr = e; }
     }
     if (!list?.length) throw lastErr || new Error('keine Termine');
-    store.set('kpop.rtcConc', { v: 2, at: Date.now(), list });
+    store.set('kpop.rtcConc', { v: 3, at: Date.now(), list });
   }
-  // Nur K-Pop: der Kalender enthält auch z. B. koreanischen Hip-Hop oder Bands
+  // Nur K-Pop: der Kalender enthält auch z. B. koreanischen Hip-Hop oder Bands.
+  // Eindeutige Fälle sofort, unklare danach per MusicBrainz (siehe rtcPending).
   await getKnownNames();
   const groupSet = new Set(knownGroupNames.flatMap(nameVariants));
   const relNames = new Set(releases.filter(r => !r.src).flatMap(r => r.names));
-  const out = [];
   // Als „kein K-Pop“ eingestuft (z. B. Rock-Band „Catch The Young“) → auch bei Konzerten raus
   const notKpop = new Set(Object.entries(mbGenre).filter(([, v]) => !v.ok).flatMap(([n]) => nameVariants(n)));
+  const yesKpop = new Set(Object.entries(mbGenre).filter(([, v]) => v.ok).flatMap(([n]) => nameVariants(n)));
+  const ok = [], pending = [];
   for (const cn of list) {
-    if (cn.tribute) { out.push(cn); continue; }
-    let ok = false;
-    for (const a of cn.artists) {
-      const v = nameVariants(a);
-      if (v.some(n => mine.has(n) || relNames.has(n))) { ok = true; break; }               // eigene Gruppen / im K-Pop-Kalender
-      if (v.some(n => notKpop.has(n))) continue;
-      if (v.some(n => groupSet.has(n))) { ok = true; break; }                            // bekannte K-Pop-Gruppe
-      try { if (await mbIsKpop(a)) { ok = true; break; } } catch (e) { console.warn('MusicBrainz', a, e.message); }
-    }
-    if (ok) out.push(cn);
+    if (cn.tribute) { ok.push(cn); continue; }
+    const vs = cn.artists.map(nameVariants);
+    if (vs.some(v => v.some(n => mine.has(n) || relNames.has(n) || yesKpop.has(n)))) ok.push(cn);   // eigene / bestätigte
+    else if (vs.every(v => v.some(n => notKpop.has(n)))) continue;                                    // als kein K-Pop bekannt
+    else if (vs.some(v => v.some(n => groupSet.has(n)) && !v.some(n => notKpop.has(n)))) ok.push(cn);  // bekannte K-Pop-Gruppe
+    else pending.push(cn);
   }
-  return out;
+  return { ok, pending };
+}
+
+// Unklare Künstler bei MusicBrainz prüfen. Ist MusicBrainz nicht erreichbar, zählt ein Eintrag in der
+// K-Pop-Datenbank (damit bei einem Server-Ausfall keine K-Pop-Konzerte verloren gehen).
+async function rtcPending(pending, onProgress, onOk) {
+  const knownAll = new Set((knownNames || []).flatMap(nameVariants));
+  const names = [...new Set(pending.flatMap(cn => cn.artists))];
+  const verdict = new Map();
+  for (let i = 0; i < names.length; i++) {
+    onProgress(`Prüfe Künstler (${i + 1}/${names.length}) …`);
+    try { verdict.set(names[i], await mbIsKpop(names[i])); }
+    catch { verdict.set(names[i], nameVariants(names[i]).some(n => knownAll.has(n))); }
+    for (const cn of pending) if (!cn.done && cn.artists.some(a => verdict.get(a))) { cn.done = true; onOk(cn); }
+  }
 }
 
 // 4) Ticketmaster (optional)
@@ -1643,14 +1664,17 @@ async function loadConcerts() {
     for (const c of await kpoConcerts()) found.set(key(c), c);
     renderConcerts(found);
   } catch (e) { errors.push('KPOP OFFICIAL nicht erreichbar'); console.warn(e); }
+  let rtcRest = [];
+  const addRtc = c => {
+    const k = key(c), same = found.get(k);
+    if (same) {   // gleicher Termin: fehlende Infos ergänzen
+      same.url ||= c.url; same.venue ||= c.venue;
+      if (c.status === 'cancelled') same.status = 'cancelled';
+    } else found.set(k, c);
+  };
   try {
-    for (const c of await rtcConcerts(t => $('cstatus').textContent = t)) {
-      const k = key(c), same = found.get(k);
-      if (same) {   // gleicher Termin: fehlende Infos ergänzen
-        same.url ||= c.url; same.venue ||= c.venue;
-        if (c.status === 'cancelled') same.status = 'cancelled';
-      } else found.set(k, c);
-    }
+    const r = await rtcConcerts(t => $('cstatus').textContent = t);
+    r.ok.forEach(addRtc); rtcRest = r.pending;
     renderConcerts(found);
   } catch (e) { errors.push('K-Pop-Tourkalender nicht erreichbar'); console.warn(e); }
   try {
@@ -1673,6 +1697,7 @@ async function loadConcerts() {
     } catch (e) { errors.push(e.message); }
   }
   renderConcerts(found);
+  if (rtcRest.length) await rtcPending(rtcRest, t => $('cstatus').textContent = t, c => { addRtc(c); renderConcerts(found); });
   $('cstatus').innerHTML = '';
   $('cstatus').append(`${concerts.length} K-Pop-Konzerte in Deutschland · Stand ${new Date().toLocaleTimeString('de-DE')}`);
   if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err',
@@ -1683,10 +1708,13 @@ async function loadConcerts() {
 }
 
 // Optionale Konzert-Filter (Standard: alles anzeigen)
-let cfilter = { city: '', mine: false, noTribute: false, onlyConcerts: false };
+// Konzert-Filter werden gespeichert und beim nächsten Start wiederhergestellt
+const CFILTER_DEFAULT = { city: '', mine: false, noTribute: false, onlyConcerts: false };
+let cfilter = { ...CFILTER_DEFAULT, ...store.get('kpop.cfilter', {}) };
+const setCfilter = (k, v) => { cfilter[k] = v; store.set('kpop.cfilter', cfilter); renderConcerts(); };
 function renderConcertFilters() {
   const box = $('cfilters'); box.innerHTML = '';
-  const cities = [...new Set(concerts.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+  const cities = [...new Set([...concerts.map(c => c.city), cfilter.city].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
   const row = box.appendChild(Object.assign(document.createElement('div'), { className: 'frow' }));
   row.appendChild(Object.assign(document.createElement('b'), { textContent: 'Filter (optional)' }));
   // Stadt als Auswahlliste (mit Tribute-Shows über 100 Städte)
@@ -1694,19 +1722,23 @@ function renderConcertFilters() {
   sel.className = 'chip'; sel.setAttribute('aria-label', 'Stadt');
   for (const [val, text] of [['', `Alle Städte (${cities.length})`], ...cities.map(c => [c, `${c} (${concerts.filter(x => x.city === c).length})`])])
     sel.appendChild(Object.assign(document.createElement('option'), { value: val, textContent: text, selected: cfilter.city === val }));
-  sel.onchange = () => { cfilter.city = sel.value; renderConcerts(); };
+  sel.onchange = () => setCfilter('city', sel.value);
   const m = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '★ Nur meine Gruppen' }));
   m.setAttribute('aria-pressed', cfilter.mine);
-  m.onclick = () => { cfilter.mine = !cfilter.mine; renderConcerts(); };
-  if (concerts.some(c => RTC_TYPES[c.kind])) {
+  m.onclick = () => setCfilter('mine', !cfilter.mine);
+  if (cfilter.onlyConcerts || concerts.some(c => RTC_TYPES[c.kind])) {
     const k = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '🎤 Nur Konzerte', title: 'Ohne Fan-Events, Fan-Signings und Festivals' }));
     k.setAttribute('aria-pressed', cfilter.onlyConcerts);
-    k.onclick = () => { cfilter.onlyConcerts = !cfilter.onlyConcerts; renderConcerts(); };
+    k.onclick = () => setCfilter('onlyConcerts', !cfilter.onlyConcerts);
   }
-  if (concerts.some(c => c.tribute)) {
+  if (cfilter.noTribute || concerts.some(c => c.tribute)) {
     const t = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '🎭 Tribute-Shows ausblenden' }));
     t.setAttribute('aria-pressed', cfilter.noTribute);
-    t.onclick = () => { cfilter.noTribute = !cfilter.noTribute; renderConcerts(); };
+    t.onclick = () => setCfilter('noTribute', !cfilter.noTribute);
+  }
+  if (Object.keys(CFILTER_DEFAULT).some(k => cfilter[k] !== CFILTER_DEFAULT[k])) {
+    const r = row.appendChild(Object.assign(document.createElement('button'), { textContent: '✕ Filter zurücksetzen' }));
+    r.onclick = () => { cfilter = { ...CFILTER_DEFAULT }; store.set('kpop.cfilter', cfilter); renderConcerts(); };
   }
 }
 const concertIsMine = c => {
@@ -1717,7 +1749,6 @@ const concertIsMine = c => {
 function renderConcerts(map) {
   if (map) concerts = [...map.values()].filter(c => (c.end || c.date) >= today).sort((a, b) => a.date - b.date || a.time.localeCompare(b.time));
   const q = $('cq').value.trim().toLowerCase();
-  if (cfilter.city && !concerts.some(c => c.city === cfilter.city)) cfilter.city = '';
   renderConcertFilters();
   const list = concerts.filter(c => (!q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q)) &&
     (!cfilter.city || c.city === cfilter.city) && (!cfilter.mine || concertIsMine(c)) && !(cfilter.noTribute && c.tribute) && !(cfilter.onlyConcerts && RTC_TYPES[c.kind]));
