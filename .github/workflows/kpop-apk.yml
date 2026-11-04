@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# Builds nacheinander ausführen, damit sich das Hochladen der APK nicht überschneidet
+concurrency:
+  group: kpop-apk
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
