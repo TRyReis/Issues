@@ -85,6 +85,13 @@
   summary { cursor: pointer; font-weight: 600; }
   textarea { width: 100%; min-height: 120px; margin: 10px 0; }
   footer { color: var(--muted); font-size: 13px; margin-top: 32px; }
+  .alink { color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .sheet { position: fixed; inset: 0; z-index: 10; background: var(--bg); overflow-y: auto; }
+  .sheet-head { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line);
+                display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; max-width: 980px; margin: 0 auto; }
+  .sheet-head h1 { font-size: 22px; overflow-wrap: anywhere; }
+  .sheet-head button { flex: none; }
+  .sheet-body { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; }
   a { color: var(--accent); }
 </style>
 </head>
@@ -137,8 +144,11 @@
 
   <footer>
     Daten: <a href="https://kpopofficial.com/kpop-comebacks/" target="_blank" rel="noopener">KPOP OFFICIAL – Comeback-Kalender</a>.
+    Gruppen aus „Meine Gruppen“, die dort fehlen, werden zusätzlich bei
+    <a href="https://www.deezer.com" target="_blank" rel="noopener">Deezer</a> und
+    <a href="https://musicbrainz.org" target="_blank" rel="noopener">MusicBrainz</a> gesucht.
     Alle K-Pop-Artists inkl. Solo-Releases. Datum = offizielles Release-Datum in Korea (KST), „bei uns“ = deutsche Uhrzeit.
-    Karte antippen für die Tracklist.
+    Karte antippen für die Tracklist, Künstlernamen antippen für die ganze Diskographie.
   </footer>
   </div>
 
@@ -167,6 +177,14 @@
     </footer>
   </div>
 </main>
+
+<div id="disco" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="discoTitle">
+  <div class="sheet-head">
+    <button id="discoClose" aria-label="Zurück">← Zurück</button>
+    <div style="min-width:0"><h1 id="discoTitle"></h1><p class="sub" id="discoSub"></p></div>
+  </div>
+  <div class="sheet-body" id="discoBody"></div>
+</div>
 
 <script>
 const KPO = 'https://kpopofficial.com/wp-json/wp/v2';
@@ -225,10 +243,25 @@ function nameVariants(name) {
   return [...new Set([...n, ...n.map(v => ALIASES[v]).filter(Boolean)])];
 }
 
-async function kpo(path) {
-  const res = await fetch(`${KPO}/${path}`);
-  if (!res.ok) throw new Error(`KPOP OFFICIAL HTTP ${res.status}`);
-  return { data: await res.json(), pages: +(res.headers.get('X-WP-TotalPages') || 1) };
+// Die Seite begrenzt die Anfragen (HTTP 429) → max. 2 gleichzeitig, bei Fehlern bis zu 3 Versuche mit Pause
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let kpoActive = 0;
+const kpoWaiting = [];
+async function kpo(path, tries = 3) {
+  for (let attempt = 1; ; attempt++) {
+    if (kpoActive >= 2) await new Promise(r => kpoWaiting.push(r));
+    kpoActive++;
+    let retry = false, err;
+    try {
+      const res = await fetch(`${KPO}/${path}`);
+      if (res.ok) return { data: await res.json(), pages: +(res.headers.get('X-WP-TotalPages') || 1) };
+      err = new Error(`KPOP OFFICIAL HTTP ${res.status}`);
+      retry = res.status === 429 || res.status >= 500;
+    } catch (e) { err = e; retry = true; }
+    finally { kpoActive--; kpoWaiting.shift()?.(); }
+    if (!retry || attempt >= tries) throw err;
+    await sleep(1500 * attempt);
+  }
 }
 
 // Release-Datum aus „November 13, 2026 · Friday · 2 PM KST“
@@ -260,43 +293,86 @@ function monthSlugs() {
   return out;
 }
 
-function parseRelease(x) {
-  const terms = (x._embedded?.['wp:term'] || []).flat();
-  const tax = t => terms.filter(z => z.taxonomy === t);
+// Schlanke Abfrage (die eingebetteten Kategorien wären bis zu 10 MB groß);
+// Namen, Typen und Cover werden gesammelt nachgeladen und zwischengespeichert.
+const ALBUM_FIELDS = 'id,title,excerpt,link,featured_media,group,artist_solo,album-type,class_list';
+const cleanName = n => decode(n).replace(/[❌✅⭐✨]/gu, '').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
+const termCache = (c => c && Date.now() - c.at < 7 * 864e5 ? c : null)(store.get('kpop.terms', null));
+let typeSlugById = termCache ? new Map(termCache.types) : null;
+const termNames = { group: new Map(termCache?.group || []), artist_solo: new Map(termCache?.artist_solo || []) };
+const mediaUrl = new Map();
+const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+
+// Typen, Künstlernamen und Cover parallel nachladen
+async function ensureLookups(items) {
+  const jobs = [];
+  if (!typeSlugById) jobs.push(kpo('album-type?per_page=100&_fields=id,slug').then(({ data }) => { typeSlugById = new Map(data.map(t => [t.id, t.slug])); }));
+  for (const tax of ['group', 'artist_solo']) {
+    const ids = [...new Set(items.flatMap(x => x[tax] || []))].filter(id => !termNames[tax].has(id));
+    for (const c of chunks(ids, 100))
+      jobs.push(kpo(`${tax}?include=${c.join(',')}&per_page=100&_fields=id,name`).then(({ data }) => data.forEach(t => termNames[tax].set(t.id, cleanName(t.name)))));
+  }
+  const mids = [...new Set(items.map(x => x.featured_media).filter(Boolean))].filter(id => !mediaUrl.has(id));
+  for (const c of chunks(mids, 100))
+    jobs.push(kpo(`media?include=${c.join(',')}&per_page=100&_fields=id,source_url,media_details`).then(({ data }) =>
+      data.forEach(m => { const sz = m.media_details?.sizes || {}; mediaUrl.set(m.id, (sz.thumbnail || sz.medium || m).source_url || ''); })));
+  // Einzelne Fehler sind nicht schlimm: dann fehlt nur ein Cover oder Name
+  await Promise.all(jobs.map(j => j.catch(e => console.warn('Nachladen:', e.message))));
+  if (jobs.length) store.set('kpop.terms', { at: termCache?.at || Date.now(), types: [...(typeSlugById || [])],
+    group: [...termNames.group], artist_solo: [...termNames.artist_solo] });
+}
+
+// Alle Seiten einer Album-Abfrage laden
+async function fetchAlbums(query, onBatch) {
+  const out = [];
+  let page = 1, pages = 1;
+  do {
+    const r = await kpo(`album?${query}&per_page=100&page=${page}&_fields=${ALBUM_FIELDS}`);
+    pages = r.pages;
+    await ensureLookups(r.data);
+    out.push(...r.data);
+    onBatch?.(out);
+  } while (++page <= pages);
+  return out;
+}
+
+function parseRelease(x, windowed = true) {
   const excerpt = strip(x.excerpt?.rendered);
   let d = parseKpoDate(excerpt);
-  if (!d) {  // Fallback: Kalender-Kategorien
-    const y = +tax('calendar-year')[0]?.name, mo = parseInt(tax('calendar-month')[0]?.name) - 1, day = +tax('calendar-date')[0]?.name;
-    if (y && mo >= 0) d = { date: new Date(y, mo, day || 1), partial: !day };
+  if (!d) {  // Fallback: Monats-Kategorie, z. B. „album-month-year-november-2026“
+    const m = (x.class_list || []).join(' ').match(/album-month-year-([a-z]+)-(\d{4})/);
+    if (m && monthIdx(m[1]) >= 0) d = { date: new Date(+m[2], monthIdx(m[1]), 1), partial: true };
   }
-  if (!d || d.date < from || d.date > to) return null;
+  if (!d || (windowed && (d.date < from || d.date > to))) return null;
 
   const fullTitle = decode(x.title?.rendered).replace(/\s*\(\d{4}\)\s*$/, '');
   const dash = fullTitle.search(/\s[–—-]\s/);
   const left = dash > 0 ? fullTitle.slice(0, dash) : '';
   const title = dash > 0 ? fullTitle.slice(dash + 3).trim() : fullTitle;
 
-  const clean = n => decode(n).replace(/[\u274C\u2705\u2B50\u2728]/gu, '').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
-  const groupNames = tax('group').map(t => clean(t.name));
-  const soloNames = tax('artist_solo').map(t => clean(t.name));
-  const artist = (groupNames.length ? groupNames : soloNames).join(' × ') || left || 'Unbekannt';
-  const typeSlugs = tax('album-type').map(t => t.slug);
+  const refs = [
+    ...(x.group || []).map(id => ({ tax: 'group', id, name: termNames.group.get(id) })),
+    ...(x.artist_solo || []).map(id => ({ tax: 'artist_solo', id, name: termNames.artist_solo.get(id) }))
+  ].filter(r => r.name);
+  const groupNames = refs.filter(r => r.tax === 'group').map(r => r.name);
+  const soloNames = refs.filter(r => r.tax === 'artist_solo').map(r => r.name);
+  const shownRefs = groupNames.length ? refs.filter(r => r.tax === 'group') : refs;
+  const artist = shownRefs.map(r => r.name).join(' × ') || left || 'Unbekannt';
+  const typeSlugs = (x['album-type'] || []).map(id => typeSlugById?.get(id)).filter(Boolean);
   const type = typeSlugs.includes('full-album') ? 'Album' : typeSlugs.includes('ep') ? 'EP'
              : typeSlugs.some(t => /single/.test(t)) ? 'Single' : typeSlugs.includes('ost') ? 'OST' : 'Sonstiges';
   // z. B. „9th Mini Album“ aus „TXT 9th Mini Album – PERFECT STORM“
   const prefix = [artist, ...groupNames, ...soloNames].find(n => n && left.toLowerCase().startsWith(n.toLowerCase()));
   const label = (prefix ? left.slice(prefix.length).trim() : '') || type;
-  const media = x._embedded?.['wp:featuredmedia']?.[0];
-  const sizes = media?.media_details?.sizes || {};
 
   return {
-    id: x.id, title, artist, type, label, link: x.link,
+    id: x.id, title, artist, refs: shownRefs, type, label, link: x.link,
     solo: !groupNames.length,
     japan: typeSlugs.includes('japanese-album'), ost: typeSlugs.includes('ost'),
     pre: /pre-?release/i.test(left),
     names: [...groupNames, ...soloNames].flatMap(nameVariants),
     date: d.date, partial: d.partial, timeDE: d.partial ? '' : kstToGerman(d.date, excerpt),
-    cover: (sizes.thumbnail || sizes.medium || media)?.source_url || ''
+    cover: mediaUrl.get(x.featured_media) || ''
   };
 }
 
@@ -307,25 +383,153 @@ async function load() {
   try {
     const { data: terms } = await kpo(`album-month-year?slug=${monthSlugs().join(',')}&_fields=id`);
     const ids = terms.map(t => t.id).join(',');
-    if (ids) {
-      let page = 1, pages = 1;
-      do {
-        const r = await kpo(`album?album-month-year=${ids}&per_page=100&page=${page}` +
-          `&_embed=wp:term,wp:featuredmedia&_fields=id,title,excerpt,link,_links,_embedded`);
-        pages = r.pages;
-        r.data.map(parseRelease).filter(Boolean).forEach(x => found.set(x.id, x));
-        render(found);
-      } while (++page <= pages);
-    }
+    if (ids) await fetchAlbums(`album-month-year=${ids}`, batch => {
+      batch.map(x => parseRelease(x)).filter(Boolean).forEach(x => found.set(x.id, x));
+      render(found);
+    });
     render(found);
+    // Gruppen, die der Comeback-Kalender nicht kennt → Deezer + MusicBrainz
+    try {
+      await getKnownNames();
+      const known = new Set(knownNames.flatMap(nameVariants));
+      const gaps = groups.filter(g => !nameVariants(g).some(v => known.has(v)));
+      if (gaps.length) {
+        $('status').textContent = `Suche ${gaps.length} weitere Gruppe(n) bei Deezer & MusicBrainz …`;
+        for (const x of await extraReleases(gaps)) found.set(x.id, x);
+        render(found);
+      }
+    } catch (e) { console.warn('Zusatzquellen:', e); }
+    checkGroups();
     loadedAt = new Date();
     updateStatus();
-    store.set('kpop.cache', { v: 3, at: Date.now(), list: [...found.values()] });
+    store.set('kpop.cache', { v: 4, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
   } finally {
     $('reload').disabled = false;
   }
+}
+
+// ================= Zusatzquellen für Gruppen außerhalb des Kalenders =================
+// Status je Gruppe: { deezer: Name|null, mb: Name|null }
+let extraStatus = store.get('kpop.extraStatus', {});
+
+// Deezer erlaubt keine direkten Browser-Abfragen (CORS) → JSONP
+let jsonpN = 0;
+function deezer(path) {
+  return new Promise((resolve, reject) => {
+    const cb = '__dz' + (++jsonpN) + '_' + Date.now(), s = document.createElement('script');
+    const done = () => { clearTimeout(timer); delete window[cb]; s.remove(); };
+    const timer = setTimeout(() => { done(); reject(new Error('Deezer antwortet nicht')); }, 15000);
+    window[cb] = d => { done(); d?.error ? reject(new Error('Deezer: ' + (d.error.message || 'Fehler'))) : resolve(d); };
+    s.onerror = () => { done(); reject(new Error('Deezer nicht erreichbar')); };
+    s.src = `https://api.deezer.com/${path}${path.includes('?') ? '&' : '?'}output=jsonp&callback=${cb}`;
+    document.head.appendChild(s);
+  });
+}
+
+// MusicBrainz (max. 1 Anfrage pro Sekunde)
+const MB = 'https://musicbrainz.org/ws/2';
+let mbLast = 0;
+async function mb(path) {
+  const wait = mbLast + 1100 - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  mbLast = Date.now();
+  const res = await fetch(`${MB}/${path}${path.includes('?') ? '&' : '?'}fmt=json`, { headers: { Accept: 'application/json' } });
+  if (res.status === 503) { await new Promise(r => setTimeout(r, 2000)); return mb(path); }
+  if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
+  return res.json();
+}
+const KPOP_TAGS = new Set(['kpop', 'koreanpop', 'kpopidol', 'koreanidol']);
+const mbIsKorean = a => a.country === 'KR' || norm(a.area?.name) === 'southkorea' ||
+  (a.tags || []).some(t => KPOP_TAGS.has(norm(t.name)));
+
+// Gleiches Release aus zwei Quellen erkennen
+const titleKey = (g, t) => norm(g) + '|' + norm((t || '').replace(/\s+-\s+(EP|Single)$/i, '').replace(/\s*[\(\[].*?[\)\]]\s*/g, ' '));
+const extraTypes = { album: 'Album', ep: 'EP', single: 'Single' };
+const inWindow = d => d && !isNaN(d) && d >= from && d <= to;
+
+// Deezer-/MusicBrainz-Eintrag → Release-Objekt (null, wenn unbrauchbar)
+function deezerRelease(a, ref = null, g = '') {
+  const date = new Date(a.release_date + 'T00:00:00');
+  if (isNaN(date) || !extraTypes[a.record_type]) return null;
+  return { id: 'dz-' + a.id, src: 'Deezer', srcId: a.id, group: g, title: a.title, artist: ref?.name || g,
+    refs: ref ? [ref] : [], type: extraTypes[a.record_type], label: extraTypes[a.record_type], link: a.link,
+    solo: false, japan: false, ost: false, pre: false, names: nameVariants(g || ref?.name || ''),
+    date, partial: false, timeDE: '', cover: a.cover_medium || '' };
+}
+function mbRelease(rg, ref = null, g = '') {
+  const d = rg['first-release-date'] || '';
+  if ((rg['secondary-types'] || []).some(t => /live|compilation|dj-mix|interview/i.test(t))) return null;
+  const date = new Date((d.length === 10 ? d : d.length === 7 ? d + '-01' : 'x') + 'T00:00:00');
+  if (isNaN(date)) return null;
+  const type = { Album: 'Album', EP: 'EP', Single: 'Single' }[rg['primary-type']] || 'Sonstiges';
+  return { id: 'mb-' + rg.id, src: 'MusicBrainz', srcId: rg.id, group: g, title: rg.title,
+    artist: (rg['artist-credit'] || []).map(a => a.name + (a.joinphrase || '')).join('') || ref?.name || g,
+    refs: ref ? [ref] : [], type, label: type, link: `https://musicbrainz.org/release-group/${rg.id}`,
+    solo: false, japan: false, ost: false, pre: false, names: nameVariants(g || ref?.name || ''),
+    date, partial: d.length === 7, timeDE: '', cover: `https://coverartarchive.org/release-group/${rg.id}/front-250` };
+}
+
+async function extraReleases(gaps) {
+  const out = new Map();
+  const cache = store.get('kpop.extraIds', {});   // Gruppe → { dz, mb, at }
+  const add = x => { const k = titleKey(x.group, x.title); if (!out.has(k)) out.set(k, x); };
+
+  for (const g of gaps) {
+    const want = new Set(nameVariants(g));
+    let c = cache[g];
+    if (!c || Date.now() - c.at > 14 * 864e5) {
+      c = { dz: null, dzName: null, mb: null, mbName: null, at: Date.now() };
+      try {   // Deezer: exakter Name, bei mehreren der mit den meisten Fans
+        const r = await deezer(`search/artist?q=${encodeURIComponent(g)}&limit=25`);
+        const hit = (r.data || []).filter(a => nameVariants(a.name).some(v => want.has(v)))
+          .sort((a, b) => (b.nb_fan || 0) - (a.nb_fan || 0))[0];
+        if (hit) { c.dz = hit.id; c.dzName = hit.name; }
+      } catch (e) { console.warn(e); }
+      try {   // MusicBrainz: exakter Name/Alias UND koreanisch bzw. als K-Pop getaggt
+        const q = `artist:"${g.replace(/(["\\])/g, '\\$1')}" OR alias:"${g.replace(/(["\\])/g, '\\$1')}"`;
+        const r = await mb(`artist?query=${encodeURIComponent(q)}&limit=15`);
+        const hit = (r.artists || []).filter(a => (nameVariants(a.name).some(v => want.has(v)) ||
+          (a.aliases || []).some(al => nameVariants(al.name).some(v => want.has(v)))) && mbIsKorean(a))
+          .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+        if (hit) { c.mb = hit.id; c.mbName = hit.name; }
+      } catch (e) { console.warn(e); }
+      cache[g] = c; store.set('kpop.extraIds', cache);
+    }
+    extraStatus[g] = { deezer: c.dzName, mb: c.mbName };
+
+    if (c.dz) try {
+      const r = await deezer(`artist/${c.dz}/albums?limit=100`);
+      for (const a of r.data || []) {
+        const x = deezerRelease(a);
+        if (!x || !inWindow(x.date)) continue;
+        add(deezerRelease(a, { src: 'Deezer', id: c.dz, name: c.dzName }, g));
+      }
+    } catch (e) { console.warn(e); }
+  }
+
+  // MusicBrainz: alle Gruppen in einer Abfrage (per ID, keine Namensähnlichkeit)
+  const mbIds = gaps.map(g => cache[g]?.mb).filter(Boolean);
+  if (mbIds.length) try {
+    const dr = `firstreleasedate:[${from.toISOString().slice(0, 10)} TO ${to.toISOString().slice(0, 10)}]`;
+    const r = await mb(`release-group?query=${encodeURIComponent(`arid:(${mbIds.join(' OR ')}) AND ${dr}`)}&limit=100`);
+    for (const rg of r['release-groups'] || []) {
+      const ids = (rg['artist-credit'] || []).map(a => a.artist?.id);
+      const g = gaps.find(x => ids.includes(cache[x]?.mb));
+      if (!g || !mbRelease(rg) || !inWindow(mbRelease(rg).date)) continue;
+      add(mbRelease(rg, { src: 'MusicBrainz', id: cache[g].mb, name: cache[g].mbName }, g));
+    }
+  } catch (e) { console.warn(e); }
+
+  store.set('kpop.extraStatus', extraStatus);
+  return [...out.values()];
+}
+
+async function extraTracks(r) {
+  if (r.src === 'Deezer') return ((await deezer(`album/${r.srcId}/tracks?limit=100`)).data || []).map(t => t.title);
+  const d = await mb(`release?release-group=${r.srcId}&inc=recordings&limit=1`);
+  return (d.releases?.[0]?.media || []).flatMap(m => m.tracks || []).map(t => t.title);
 }
 
 // --- Darstellung ---
@@ -398,7 +602,15 @@ function card(r) {
   }
   el.querySelector('.title').textContent = r.title;
   el.querySelector('.title').title = r.title;
-  el.querySelector('.artist').textContent = r.artist;
+  const artistEl = el.querySelector('.artist');
+  if (r.refs?.length) {
+    r.refs.forEach((ref, i) => {
+      if (i) artistEl.append(' × ');
+      const a = artistEl.appendChild(Object.assign(document.createElement('span'), { className: 'alink', textContent: ref.name }));
+      a.title = 'Diskographie anzeigen';
+      a.onclick = e => { e.stopPropagation(); openDisco(ref); };
+    });
+  } else artistEl.textContent = r.artist;
   const meta = el.querySelector('.meta');
   const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
   if (isMine(r)) badge('★', 'soon');
@@ -406,6 +618,7 @@ function card(r) {
   if (r.solo) badge('Solo', 'plain');
   if (r.japan) badge('🇯🇵 Japan', 'plain');
   if (r.ost && r.type !== 'OST') badge('OST', 'plain');
+  if (r.src) badge('Quelle: ' + r.src, 'plain');
   const dateTxt = r.partial ? r.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) + ' (Tag offen)'
                             : `${fmt.format(r.date)} · ${relDays(r.date)}`;
   badge(dateTxt, r.date > today ? 'soon' : '');
@@ -422,6 +635,8 @@ async function showTracks(r, box) {
   box.innerHTML = '<div class="tracks">Lade Tracklist …</div>';
   let tracks = [], titleTrack = '';
   try {
+    if (r.src) tracks = await extraTracks(r);
+    else {
     const { data } = await kpo(`album/${r.id}?_fields=content`);
     const doc = new DOMParser().parseFromString(data.content?.rendered || '', 'text/html');
     for (const el of doc.querySelectorAll('.gspb_meta_value, .gspb_text, p')) {
@@ -429,6 +644,7 @@ async function showTracks(r, box) {
       if (!titleTrack && /^Title\s*[–—-]/.test(lines[0] || '')) titleTrack = lines[0].replace(/^Title\s*[–—-]\s*/, '').replace(/^[“"]|[”"]$/g, '');
       if (!tracks.length && lines.length && /^1\.\s/.test(lines[0]) && lines.every(l => /^\d+\.\s/.test(l)))
         tracks = lines.map(l => l.replace(/^\d+\.\s*/, ''));
+    }
     }
   } catch { /* unten: Hinweis */ }
   box.innerHTML = '';
@@ -444,10 +660,114 @@ async function showTracks(r, box) {
   } else {
     box.appendChild(Object.assign(document.createElement('div'), { className: 'tracks', textContent: 'Tracklist noch nicht bekannt.' }));
   }
-  const a = Object.assign(document.createElement('a'), { href: r.link, target: '_blank', rel: 'noopener', textContent: 'Details & Teaser ↗' });
+  const a = Object.assign(document.createElement('a'), { href: r.link, target: '_blank', rel: 'noopener', textContent: r.src ? `Auf ${r.src} ansehen ↗` : 'Details & Teaser ↗' });
   a.style.fontSize = '12px'; a.onclick = e => e.stopPropagation();
   box.appendChild(a);
 }
+
+// ================= Diskographie =================
+let discoToken = 0;
+async function openDisco(ref) {
+  const token = ++discoToken;
+  if (!$('disco').hidden) history.replaceState({ disco: 1 }, '');
+  else history.pushState({ disco: 1 }, '');
+  $('disco').hidden = false; document.body.style.overflow = 'hidden';
+  $('discoTitle').textContent = ref.name;
+  $('discoSub').textContent = 'Lade Diskographie …';
+  const body = $('discoBody'); body.innerHTML = ''; $('disco').scrollTop = 0;
+  const show = (title, list) => {
+    if (!list.length) return;
+    body.appendChild(Object.assign(document.createElement('h2'), { textContent: title }));
+    let year = null, grid;
+    for (const r of list.sort((a, b) => b.date - a.date)) {
+      const y = r.date.getFullYear();
+      if (y !== year) {
+        year = y;
+        body.appendChild(Object.assign(document.createElement('div'), { className: 'month', textContent: String(y) }));
+        grid = body.appendChild(Object.assign(document.createElement('div'), { className: 'grid' }));
+      }
+      grid.appendChild(card(r));
+    }
+  };
+  let deezerUsed = false;
+  try {
+    let main = [], solo = [];
+    if (ref.src === 'Deezer') {
+      const r = await deezer(`artist/${ref.id}/albums?limit=300`);
+      main = (r.data || []).map(a => deezerRelease(a, ref)).filter(Boolean);
+    } else if (ref.src === 'MusicBrainz') {
+      const r = await mb(`release-group?artist=${ref.id}&limit=100`);
+      main = (r['release-groups'] || []).map(rg => mbRelease(rg, ref)).filter(Boolean);
+    } else {
+      const raw = await fetchAlbums(`${ref.tax}=${ref.id}`);
+      main = raw.map(x => parseRelease(x, false)).filter(Boolean);
+      // Vollständiger Katalog von Deezer (der Kalender reicht nur ca. bis 2025 zurück)
+      $('discoSub').textContent = 'Lade vollständigen Katalog …';
+      try {
+        const dz = await deezerCatalog(ref.name, main);
+        if (dz) {
+          deezerUsed = true;
+          const have = new Set(main.map(r => discoKey(r.title)));
+          for (const r of dz.list) if (!have.has(discoKey(r.title))) { have.add(discoKey(r.title)); main.push(r); }
+        }
+      } catch (e) { console.warn(e); }
+      if (ref.tax === 'group') {   // Solo-Releases der Mitglieder: „JENNIE (BLACKPINK)“
+        const want = new Set(nameVariants(ref.name));
+        const { data } = await kpo(`artist_solo?search=${encodeURIComponent(ref.name)}&per_page=100&_fields=id,name`);
+        const ids = data.filter(t => { const m = cleanName(t.name).match(/\((.*)\)\s*$/);
+          return m && m[1].split(/,|\//).some(v => want.has(norm(v))); }).map(t => t.id);
+        if (ids.length) solo = (await fetchAlbums(`artist_solo=${ids.join(',')}`))
+          .map(x => parseRelease(x, false)).filter(Boolean).filter(r => !main.some(m => m.id === r.id));
+      }
+    }
+    if (token !== discoToken) return;
+    const all = [...main, ...solo];
+    if (!all.length) { $('discoSub').textContent = 'Keine Releases gefunden.'; return; }
+    const first = new Date(Math.min(...all.map(r => r.date)));
+    const next = main.filter(r => r.date > today).sort((a, b) => a.date - b.date)[0];
+    $('discoSub').textContent = `${main.length} Releases seit ${first.getFullYear()}` +
+      (solo.length ? ` · ${solo.length} Solo-Releases der Mitglieder` : '') +
+      (next ? ` · Nächstes: ${next.title} (${fmt.format(next.date)})` : '') +
+      ` · Quellen: ${ref.src || ('KPOP OFFICIAL' + (deezerUsed ? ' + Deezer' : ''))}`;
+    show('Releases', main);
+    show('Solo-Releases der Mitglieder', solo);
+  } catch (e) {
+    if (token === discoToken) $('discoSub').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}</span>`;
+  }
+}
+// Titel-Schlüssel für die Diskographie (Versionen wie „Japanese Ver.“ bleiben getrennt)
+const discoKey = t => norm((t || '').replace(/\s+-\s+(EP|Single)$/i, '').replace(/\s*[\(\[](feat|with|prod)[^\)\]]*[\)\]]/gi, ''));
+
+async function deezerAlbums(id) {
+  const out = [];
+  for (let index = 0; index < 1000; index += 100) {
+    const r = await deezer(`artist/${id}/albums?limit=100&index=${index}`);
+    out.push(...(r.data || []));
+    if (!r.next || !(r.data || []).length) break;
+  }
+  return out;
+}
+
+// Passenden Deezer-Künstler finden: exakter Name; wenn der Kalender schon erschienene Releases kennt,
+// muss mindestens ein Titel übereinstimmen (verhindert Verwechslungen bei gleichnamigen Künstlern).
+async function deezerCatalog(name, known) {
+  const want = new Set(nameVariants(name));
+  const base = name.replace(/\s*\(.*\)\s*$/, '') || name;
+  const r = await deezer(`search/artist?q=${encodeURIComponent(base)}&limit=25`);
+  const cands = (r.data || []).filter(a => nameVariants(a.name).some(v => want.has(v)))
+    .sort((a, b) => (b.nb_fan || 0) - (a.nb_fan || 0)).slice(0, 3);
+  const past = new Set(known.filter(k => k.date <= today).map(k => discoKey(k.title)));
+  for (const a of cands) {
+    const ref = { src: 'Deezer', id: a.id, name: a.name };
+    const list = (await deezerAlbums(a.id)).map(x => deezerRelease(x, ref, name)).filter(Boolean);
+    if (!past.size || list.some(x => past.has(discoKey(x.title)))) return { ref, list };
+  }
+  return null;
+}
+
+function closeDisco() { $('disco').hidden = true; document.body.style.overflow = ''; discoToken++; }
+$('discoClose').onclick = () => history.back();
+window.addEventListener('popstate', () => { if (!$('disco').hidden) closeDisco(); });
 
 // --- UI-Verdrahtung ---
 function chips(id, items, current, onPick) {
@@ -505,15 +825,17 @@ async function loadKnownNames() {
   const c = store.get('kpop.known', null);
   if (c?.list?.length && Date.now() - c.at < 7 * 864e5) return c.list;
   const list = [];
-  for (const tax of ['group', 'artist_solo']) {
-    let page = 1, pages = 1;
-    do {
-      const r = await kpo(`${tax}?per_page=100&page=${page}&_fields=name`);
-      pages = r.pages; list.push(...r.data.map(t => decode(t.name)));
-    } while (++page <= pages);
-  }
+  await Promise.all(['group', 'artist_solo'].map(async tax => {
+    const first = await kpo(`${tax}?per_page=100&page=1&_fields=name`);
+    const rest = await Promise.all(Array.from({ length: first.pages - 1 }, (_, i) => kpo(`${tax}?per_page=100&page=${i + 2}&_fields=name`)));
+    for (const r of [first, ...rest]) list.push(...r.data.map(t => decode(t.name)));
+  }));
   store.set('kpop.known', { at: Date.now(), list });
   return list;
+}
+let knownPromise = null;
+function getKnownNames() {   // nur einmal laden, auch bei gleichzeitigen Aufrufen
+  return knownPromise ||= loadKnownNames().then(l => (knownNames = l)).catch(e => { knownPromise = null; throw e; });
 }
 function editDistance(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -532,7 +854,14 @@ function checkGroups() {
   const bad = groups.filter(g => !nameVariants(g).some(v => known.has(v)));
   box.innerHTML = '';
   if (!bad.length) { box.textContent = '✅ Alle Gruppen erkannt.'; return; }
+  if (bad.every(g => extraStatus[g]?.deezer || extraStatus[g]?.mb)) box.appendChild(Object.assign(document.createElement('div'), { textContent: '✅ Alle Gruppen erkannt.' }));
   for (const g of bad) {
+    const st = extraStatus[g];
+    if (st && (st.deezer || st.mb)) {
+      box.appendChild(Object.assign(document.createElement('div'), {
+        textContent: `ℹ️ „${g}“ ist nicht im Comeback-Kalender – wird über ${[st.deezer && 'Deezer', st.mb && 'MusicBrainz'].filter(Boolean).join(' & ')} gesucht ✓` }));
+      continue;
+    }
     const n = norm(g);
     let tip = '', best = Infinity;   // ähnlichster bekannter Name (Tippfehler-Abstand)
     for (const k of knownNames) {
@@ -552,7 +881,7 @@ $('q').oninput = () => render();
 $('reload').onclick = load;
 $('saveGroups').onclick = () => {
   groups = [...new Set($('groups').value.split('\n').map(s => s.trim()).filter(Boolean))];
-  store.set('kpop.groups', groups); mine = new Set(groups.flatMap(nameVariants)); showGroups(); render();
+  store.set('kpop.groups', groups); mine = new Set(groups.flatMap(nameVariants)); showGroups(); load();
 };
 $('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); mine = new Set(groups.flatMap(nameVariants)); showGroups(); render(); };
 
@@ -570,7 +899,7 @@ async function kpoConcerts() {
   const out = [];
   let page = 1, pages = 1;
   do {
-    const r = await kpo(`event?search=germany&per_page=100&page=${page}&_embed=wp:featuredmedia&_fields=id,title,excerpt,link,_links,_embedded`);
+    const r = await kpo(`event?search=germany&per_page=100&page=${page}&_fields=id,title,excerpt,link`);
     pages = r.pages;
     for (const e of r.data) {
       const title = decode(e.title?.rendered), ex = strip(e.excerpt?.rendered);
@@ -746,11 +1075,10 @@ function showTab(name) {
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
 
 renderFilters(); showGroups();
-loadKnownNames().then(l => { knownNames = l; checkGroups(); }).catch(() => {});
 showTab(store.get('kpop.tab', 'releases'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
 const cache = store.get('kpop.cache', null);
-if (cache?.v === 3 && Date.now() - cache.at < 6 * 36e5) {
+if (cache?.v === 4 && Date.now() - cache.at < 6 * 36e5) {
   render(new Map(revive(cache.list).map(r => [r.id, r])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
 }
