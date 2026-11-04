@@ -197,6 +197,7 @@
       </div>
     </details>
     <div class="status" id="cstatus"></div>
+    <div class="filters" id="cfilters"></div>
     <div id="concerts"></div>
     <footer>
       Daten: <a href="https://kpopofficial.com" target="_blank" rel="noopener">KPOP OFFICIAL</a>
@@ -228,6 +229,7 @@ const DEFAULT_GROUPS = [
 // Filter: [Schlüssel, Überschrift, [[Wert, Beschriftung], …]]
 const FILTERS = [
   ['scope', 'Auswahl', [['all', 'Alle K-Pop-Artists'], ['mine', '★ Nur meine Gruppen']]],
+  ['size', 'Umfang', [['all', 'Alle Releases'], ['major', 'Nur Comebacks & Debüts']]],
   ['kind', 'Artist', [['all', 'Alle'], ['group', 'Gruppen'], ['solo', 'Solo']]],
   ['type', 'Art', [['all', 'Alle'], ['Album', 'Album'], ['EP', 'EP / Mini'], ['Single', 'Single'], ['OST', 'OST']]],
   ['days', 'Zeitraum', [['0', 'Alles'], ['7', '± 7 Tage'], ['14', '± 14 Tage']]],
@@ -262,13 +264,14 @@ const monthIdx = name => MONTHS.findIndex(m => m.startsWith((name || '').toLower
 
 // Umbenannte Gruppen / gängige Schreibweisen
 const ALIASES = { gidle: 'idle', txt: 'tomorrowxtogether', ampersone: 'ampersandone' };
+const ALIAS_REV = Object.entries(ALIASES).reduce((m, [k, v]) => ((m[v] ||= []).push(k), m), {});
 // „TOMORROW X TOGETHER (TXT)“ → [voller Name, „TOMORROW X TOGETHER“, „TXT“]
 function nameVariants(name) {
   const out = [name];
   const m = name.match(/^(.*?)\s*\((.*)\)\s*$/);
   if (m) { out.push(m[1]); out.push(...m[2].split(/,|\//)); }
   const n = out.map(norm).filter(Boolean);
-  return [...new Set([...n, ...n.map(v => ALIASES[v]).filter(Boolean)])];
+  return [...new Set([...n, ...n.map(v => ALIASES[v]).filter(Boolean), ...n.flatMap(v => ALIAS_REV[v] || [])])];
 }
 
 // Die Seite begrenzt die Anfragen (HTTP 429) → max. 2 gleichzeitig, bei Fehlern bis zu 3 Versuche mit Pause
@@ -401,12 +404,147 @@ function parseRelease(x, windowed = true) {
     id: x.id, title, artist, refs: shownRefs, type, label, link: x.link,
     solo: !groupNames.length,
     japan: typeSlugs.includes('japanese-album'), ost: typeSlugs.includes('ost'),
-    pre: /pre-?release/i.test(left),
+    pre: /pre-?release/i.test(left), major: true,
     names: [...groupNames, ...soloNames].flatMap(nameVariants),
     date: d.date, partial: d.partial, timeDE: d.partial ? '' : kstToGerman(d.date, excerpt),
     at: d.partial ? null : (kstMoment(d.date, excerpt)?.getTime() ?? null),
     cover: mediaUrl.get(x.featured_media) || ''
   };
+}
+
+// ================= Zweite Quelle: kprofiles.com (Monatslisten aller Releases) =================
+const KPROF = 'https://kprofiles.com/wp-json/wp/v2';
+const KPROF_HEAD = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)\b/;
+const RI = /^((?:\p{Regional_Indicator}{2})*)\s*/u;   // Flaggen am Zeilenanfang
+
+async function kprof(path, tries = 3) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(`${KPROF}/${path}`);
+      if (res.ok) return res.json();
+      if (!(res.status === 429 || res.status >= 500) || attempt >= tries) throw new Error(`kprofiles HTTP ${res.status}`);
+    } catch (e) { if (attempt >= tries) throw e; }
+    await sleep(1500 * attempt);
+  }
+}
+
+// „Comeback“ → „Comeback“, „Solo Debut“ → „Solo-Debüt“ …
+const kpKind = k => k.replace(/\bDebut\b/g, 'Debüt').replace(/^(Solo|Sub-unit|OT\d+)\s+/i, '$1-').trim();
+
+// Eine Zeile, z. B. „🇰🇷 ✧·˚ ➳ zenith [tripleS] ║〘See You〙║ [Sub-unit Comeback]“
+function kprofItem(flag, artistRaw, titleRaw, kind, date, partial, link) {
+  if (/MV Release/i.test(kind)) return null;                // nur Musikvideo zu bereits erschienenem Song
+  const artist = artistRaw.replace(/\s+/g, ' ').trim();
+  const brackets = [...artist.matchAll(/\[([^\]]+)\]/g)].map(m => m[1].replace(/^former\s+/i, '').trim());
+  const main = artist.replace(/\s*\[[^\]]*\]/g, '').trim();
+  const parts = main.split(/\s+X\s+|\s*&\s*(?=[A-Z])|,\s*/).map(x => x.trim()).filter(Boolean);
+  const title = (titleRaw || '').trim();
+  return {
+    id: 'kp-' + norm(artist) + '-' + norm(title) + '-' + date.toISOString().slice(0, 10), src: 'kprofiles', flag,
+    title: title && !/^[-–—?]+$/.test(title) && !/^TBA$/i.test(title) ? title.replace(/\s*\|\s*/g, ' · ') : 'Titel noch offen',
+    artist, refs: parts.length === 1 ? [{ src: 'name', name: parts[0] }] : parts.map(n => ({ src: 'name', name: n })),
+    type: 'Sonstiges', label: kpKind(kind), link,
+    solo: /solo/i.test(kind) || (brackets.length > 0 && !/sub-?unit/i.test(kind)),
+    japan: /japan/i.test(kind), ost: false, pre: /pre-?(release|debut)/i.test(kind),
+    major: /comeback|debut/i.test(kind),
+    names: [...new Set([main, ...parts, ...brackets].flatMap(nameVariants))],
+    date, partial, timeDE: '', at: null, cover: ''
+  };
+}
+
+function parseKprofiles(html, pageYear, pageMonth, link) {
+  const items = [], noFlag = [];
+  let day = null;
+  for (const raw of html.split(/<br\s*\/?>|<\/p>/i)) {
+    const l = strip(raw);
+    if (!l) continue;
+    if (!l.includes('║')) {
+      // Angekündigt: „ONEW [SHINee] *Solo Comeback (February 2027)“ / „OVUS *Debut (January 9th, 2027)“
+      const a = l.match(/^(.+?)\s*\*\s*([^()*]+?)\s*\(\s*([A-Z][a-z]+)\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?(\d{4})\s*\)\s*$/);
+      if (a && monthIdx(a[3]) >= 0) {
+        const partial = !a[4];
+        const it = kprofItem('', a[1], '', a[2], new Date(+a[5], monthIdx(a[3]), partial ? 1 : +a[4]), partial, link);
+        if (it && it.date >= new Date(from.getFullYear(), from.getMonth(), 1) && it.date <= to) noFlag.push(it);
+        continue;
+      }
+      // Tages-Überschrift ohne Jahr → Jahr aus der Seite ableiten
+      const h = l.match(KPROF_HEAD);
+      if (h) {
+        const mo = monthIdx(h[1]); let y = pageYear;
+        if (mo - pageMonth > 6) y--; else if (pageMonth - mo > 6) y++;
+        day = new Date(y, mo, +h[2]);
+      }
+      continue;
+    }
+    const flag = (l.match(RI) || ['', ''])[1];
+    let m = l.match(/➳\s*(.*?)\s*║〘(.*?)〙║\s*\[([^\]]*)\]/);
+    let it = null;
+    if (m && day) it = kprofItem(flag, m[1], m[2], m[3], day, false, link);
+    else if ((m = l.replace(RI, '').match(/^(.*?)\s*║〘(.*?)〙║\s*\((\d{1,2})\.(\d{1,2}|-)\.(\d{4})\)\s*║\s*(.+)$/))) {
+      const partial = m[4] === '-';                           // „(11.-.2026)“ = Tag noch offen
+      it = kprofItem(flag, m[1], m[2], m[6], new Date(+m[5], +m[3] - 1, partial ? 1 : +m[4]), partial, link);
+    }
+    if (!it || it.date < (it.partial ? new Date(from.getFullYear(), from.getMonth(), 1) : from) || it.date > to) continue;
+    if (/🇰🇷/u.test(flag)) items.push(it);                    // koreanische Künstler
+    else if (!flag) noFlag.push(it);                         // ohne Flagge: nur wenn als K-Pop-Artist bekannt
+  }
+  return { items, noFlag };
+}
+
+async function kprofReleases() {
+  const items = [], noFlag = [];
+  const months = [];
+  for (let d = new Date(from.getFullYear(), from.getMonth(), 1); d <= to; d.setMonth(d.getMonth() + 1))
+    months.push([d.getFullYear(), d.getMonth()]);
+  await Promise.all(months.map(async ([y, mo]) => {
+    try {
+      const data = await kprof(`posts?slug=${MONTHS[mo]}-${y}-kpop-comebacks-debuts-releases&_fields=content,link`);
+      if (!data?.length) return;                            // Monatsseite gibt es noch nicht
+      const r = parseKprofiles(data[0].content?.rendered || '', y, mo, data[0].link);
+      items.push(...r.items); noFlag.push(...r.noFlag);
+    } catch (e) { console.warn('kprofiles', MONTHS[mo], e.message); }
+  }));
+  return { items, noFlag };
+}
+
+// ================= Duplikate zwischen den Quellen zusammenführen =================
+// Gleich = gleicher Künstler UND (gleicher Titel ±1 Tag ODER gleicher Tag, wenn eine Quelle Albumname
+// und die andere den Titelsong nennt). Bei Duplikaten gewinnt die Quelle mit mehr Infos.
+// Gleicher Künstler: gleiche Namensvariante oder Unit-Name aus ganzen Wörtern
+// („ZEROBASEONE EMP“ ↔ „ZEROBASEONE“ ja, „CHANMINA“ ↔ „CHANMIN“ nein)
+const artistWords = s => (s || '').replace(/\s*[\[(].*?[\])]/g, '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+const wordPrefix = (a, b) => b.length > 0 && a.length > b.length && b.every((w, i) => a[i] === w);
+const sameArtist = (r, s2) => r.names.some(n => s2.names.includes(n)) ||
+  wordPrefix(artistWords(r.artist), artistWords(s2.artist)) || wordPrefix(artistWords(s2.artist), artistWords(r.artist));
+const SRC_RANK = { undefined: 0, Deezer: 1, MusicBrainz: 2, kprofiles: 3 };   // kleiner = mehr Infos (Cover, Tracklist)
+function mergeInto(found, items) {
+  const byDay = new Map();
+  for (const r of found.values()) {
+    const k = r.date.toDateString();
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(r);
+  }
+  let added = 0;
+  for (const it of items) {
+    const near = [-1, 0, 1].flatMap(o => byDay.get(addDays(it.date, o).toDateString()) || []);
+    const dup = near.find(r => sameArtist(r, it) &&
+      (discoKey(r.title) === discoKey(it.title) || (Math.abs(r.date - it.date) <= 864e5 && r.partial === it.partial &&
+        ((r.src === 'kprofiles') !== (it.src === 'kprofiles')))));   // Albumname ↔ Titelsong
+    if (dup) {
+      const [keep, drop] = SRC_RANK[it.src] < SRC_RANK[dup.src] ? [it, dup] : [dup, it];
+      if (drop.src === 'kprofiles' && drop.title !== 'Titel noch offen' && discoKey(drop.title) !== discoKey(keep.title)) keep.titleTrack ||= drop.title;
+      if (keep === it) {
+        found.delete(dup.id); found.set(it.id, it);
+        const list = byDay.get(dup.date.toDateString()); list.splice(list.indexOf(dup), 1, it);
+      }
+      continue;
+    }
+    found.set(it.id, it); added++;
+    const k = it.date.toDateString();
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(it);
+  }
+  return added;
 }
 
 async function load() {
@@ -427,21 +565,27 @@ async function load() {
       render(found);
     });
     render(found);
+    // Zweite Quelle: kprofiles (alle koreanischen Releases des Monats)
+    $('status').textContent = 'Lade weitere Releases (kprofiles) …';
+    const kp = await kprofReleases().catch(e => { console.warn(e); return { items: [], noFlag: [] }; });
+    mergeInto(found, kp.items);
+    render(found);
     // Gruppen, die der Comeback-Kalender nicht kennt → Deezer + MusicBrainz
     try {
       await getKnownNames();
       const known = new Set(knownNames.flatMap(nameVariants));
+      mergeInto(found, kp.noFlag.filter(it => it.names.some(n => known.has(n))));
       const gaps = groups.filter(g => !nameVariants(g).some(v => known.has(v)));
       if (gaps.length) {
         $('status').textContent = `Suche ${gaps.length} weitere Gruppe(n) bei Deezer & MusicBrainz …`;
-        for (const x of await extraReleases(gaps)) found.set(x.id, x);
-        render(found);
+        mergeInto(found, await extraReleases(gaps));
       }
+      render(found);
     } catch (e) { console.warn('Zusatzquellen:', e); }
     checkGroups();
     loadedAt = new Date();
     updateStatus();
-    store.set('kpop.cache', { v: 5, at: Date.now(), list: [...found.values()] });
+    store.set('kpop.cache', { v: 6, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
   } finally {
@@ -494,7 +638,7 @@ function deezerRelease(a, ref = null, g = '') {
   if (isNaN(date) || !extraTypes[a.record_type]) return null;
   return { id: 'dz-' + a.id, src: 'Deezer', srcId: a.id, group: g, title: a.title, artist: ref?.name || g,
     refs: ref ? [ref] : [], type: extraTypes[a.record_type], label: extraTypes[a.record_type], link: a.link,
-    solo: false, japan: false, ost: false, pre: false, names: nameVariants(g || ref?.name || ''),
+    solo: false, japan: false, ost: false, pre: false, major: true, names: nameVariants(g || ref?.name || ''),
     date, partial: false, timeDE: '', cover: a.cover_medium || '' };
 }
 function mbRelease(rg, ref = null, g = '') {
@@ -506,7 +650,7 @@ function mbRelease(rg, ref = null, g = '') {
   return { id: 'mb-' + rg.id, src: 'MusicBrainz', srcId: rg.id, group: g, title: rg.title,
     artist: (rg['artist-credit'] || []).map(a => a.name + (a.joinphrase || '')).join('') || ref?.name || g,
     refs: ref ? [ref] : [], type, label: type, link: `https://musicbrainz.org/release-group/${rg.id}`,
-    solo: false, japan: false, ost: false, pre: false, names: nameVariants(g || ref?.name || ''),
+    solo: false, japan: false, ost: false, pre: false, major: true, names: nameVariants(g || ref?.name || ''),
     date, partial: d.length === 7, timeDE: '', cover: `https://coverartarchive.org/release-group/${rg.id}/front-250` };
 }
 
@@ -585,6 +729,7 @@ function passes(r) {
   if (days && Math.abs(r.date - today) > days * 864e5) return false;
   if (f.japan === 'hide' && r.japan) return false;
   if (f.pre === 'hide' && r.pre) return false;
+  if (f.size === 'major' && r.major === false) return false;
   return true;
 }
 
@@ -614,9 +759,12 @@ function render(map) {
 const tabCount = (tab, n) => { document.querySelector(`.tab[data-tab="${tab}"] .tc`).textContent = n ? (n > 99 ? '99+' : n) : ''; };
 
 // Liste nach Tagen gruppiert („Heute“, „Gestern“, „Fr., 30. Okt.“ …)
+const PAGE = 120;
+let shown = {};   // je Liste: wie viele Karten angezeigt werden (für flüssiges Scrollen bei vielen Releases)
 function fillByDay(id, list, emptyMsg) {
   const el = $(id); el.innerHTML = '';
   if (!list.length) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  const all = list; list = list.slice(0, shown[id] || PAGE);
   const dayFmt = new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
   const monFmt = new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' });
   let key = null, grid;
@@ -631,6 +779,12 @@ function fillByDay(id, list, emptyMsg) {
       grid = el.appendChild(Object.assign(document.createElement('div'), { className: 'grid' }));
     }
     grid.appendChild(card(r));
+  }
+  if (all.length > list.length) {
+    const more = el.appendChild(Object.assign(document.createElement('button'), { className: 'primary',
+      textContent: `Weitere ${Math.min(PAGE, all.length - list.length)} von ${all.length - list.length} anzeigen` }));
+    more.style.cssText = 'display:block;margin:16px auto';
+    more.onclick = () => { shown[id] = list.length + PAGE; render(); };
   }
 }
 
@@ -685,6 +839,7 @@ function card(r) {
   if (r.japan) badge('🇯🇵 Japan', 'plain');
   if (r.ost && r.type !== 'OST') badge('OST', 'plain');
   if (r.src) badge('Quelle: ' + r.src, 'plain');
+  if (r.titleTrack) badge('🎵 Titelsong: ' + r.titleTrack, 'plain');
   const dateTxt = r.partial ? r.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) + ' (Tag offen)'
                             : `${fmt.format(r.date)} · ${relDays(r.date)}`;
   badge(dateTxt, r.date > today ? 'soon' : '');
@@ -701,7 +856,8 @@ async function showTracks(r, box) {
   box.innerHTML = '<div class="tracks">Lade Tracklist …</div>';
   let tracks = [], titleTrack = '';
   try {
-    if (r.src) tracks = await extraTracks(r);
+    if (r.src === 'kprofiles') { tracks = r.title !== 'Titel noch offen' ? r.title.split(' · ') : []; titleTrack = tracks[0] || ''; }
+    else if (r.src) tracks = await extraTracks(r);
     else {
     const { data } = await kpo(`album/${r.id}?_fields=content`);
     const doc = new DOMParser().parseFromString(data.content?.rendered || '', 'text/html');
@@ -727,7 +883,7 @@ async function showTracks(r, box) {
   } else {
     box.appendChild(Object.assign(document.createElement('div'), { className: 'tracks', textContent: 'Tracklist noch nicht bekannt.' }));
   }
-  const a = Object.assign(document.createElement('a'), { href: r.link, target: '_blank', rel: 'noopener', textContent: r.src ? `Auf ${r.src} ansehen ↗` : 'Details & Teaser ↗' });
+  const a = Object.assign(document.createElement('a'), { href: r.link, target: '_blank', rel: 'noopener', textContent: r.src === 'kprofiles' ? 'Monatsliste auf kprofiles ↗' : r.src ? `Auf ${r.src} ansehen ↗` : 'Details & Teaser ↗' });
   a.style.fontSize = '12px'; a.onclick = e => e.stopPropagation();
   box.appendChild(a);
 }
@@ -802,12 +958,24 @@ async function openDisco(ref) {
       grid.appendChild(card(r));
     }
   };
-  let deezerUsed = false;
+  let deezerUsed = false, noCatalog = false;
   try {
     let main = [], solo = [];
-    if (ref.src === 'Deezer') {
-      const r = await deezer(`artist/${ref.id}/albums?limit=300`);
-      main = (r.data || []).map(a => deezerRelease(a, ref)).filter(Boolean);
+    if (ref.src === 'name') {
+      // Künstler nur mit Namen bekannt (kprofiles): Releases aus dem aktuellen Zeitraum + Deezer-Katalog,
+      // aber nur, wenn ein bereits erschienener Titel bei Deezer übereinstimmt (keine Verwechslung)
+      const want = new Set(nameVariants(ref.name));
+      main = releases.filter(r => r.names.some(n => want.has(n)));
+      $('discoSub').textContent = 'Lade vollständigen Katalog …';
+      const dz = await deezerCatalog(ref.name, main, true).catch(() => null);
+      if (dz) {
+        deezerUsed = true;
+        const merged = new Map(main.map(r => [r.id, { ...r }]));
+        mergeInto(merged, dz.list);
+        main = [...merged.values()];
+      } else noCatalog = true;
+    } else if (ref.src === 'Deezer') {
+      main = (await deezerAlbums(ref.id)).map(a => deezerRelease(a, ref)).filter(Boolean);
     } else if (ref.src === 'MusicBrainz') {
       const r = await mb(`release-group?artist=${ref.id}&limit=100`);
       main = (r['release-groups'] || []).map(rg => mbRelease(rg, ref)).filter(Boolean);
@@ -841,7 +1009,8 @@ async function openDisco(ref) {
     $('discoSub').textContent = `${main.length} Releases seit ${first.getFullYear()}` +
       (solo.length ? ` · ${solo.length} Solo-Releases der Mitglieder` : '') +
       (next ? ` · Nächstes: ${next.title} (${fmt.format(next.date)})` : '') +
-      ` · Quellen: ${ref.src || ('KPOP OFFICIAL' + (deezerUsed ? ' + Deezer' : ''))}`;
+      ` · Quellen: ${ref.src === 'name' ? (deezerUsed ? 'Kalender + Deezer' : 'Kalender') : ref.src || ('KPOP OFFICIAL' + (deezerUsed ? ' + Deezer' : ''))}` +
+      (noCatalog ? ' · Ältere Releases: kein eindeutiger Katalog gefunden' : '');
     show('Releases', main);
     show('Solo-Releases der Mitglieder', solo);
   } catch (e) {
@@ -866,17 +1035,20 @@ async function deezerAlbums(id) {
 
 // Passenden Deezer-Künstler finden: exakter Name; wenn der Kalender schon erschienene Releases kennt,
 // muss mindestens ein Titel übereinstimmen (verhindert Verwechslungen bei gleichnamigen Künstlern).
-async function deezerCatalog(name, known) {
+async function deezerCatalog(name, known, strict = false) {
   const want = new Set(nameVariants(name));
   const base = name.replace(/\s*\(.*\)\s*$/, '') || name;
   const r = await deezer(`search/artist?q=${encodeURIComponent(base)}&limit=25`);
   const cands = (r.data || []).filter(a => nameVariants(a.name).some(v => want.has(v)))
     .sort((a, b) => (b.nb_fan || 0) - (a.nb_fan || 0)).slice(0, 3);
-  const past = new Set(known.filter(k => k.date <= today).map(k => discoKey(k.title)));
+  const pastItems = known.filter(k => k.date <= today && !k.partial);
+  const past = new Set(pastItems.map(k => discoKey(k.title)));
   for (const a of cands) {
     const ref = { src: 'Deezer', id: a.id, name: a.name };
     const list = (await deezerAlbums(a.id)).map(x => deezerRelease(x, ref, name)).filter(Boolean);
-    if (!past.size || list.some(x => past.has(discoKey(x.title)))) return { ref, list };
+    // Bestätigt, wenn ein Titel übereinstimmt – oder (bei exakt gleichem Namen) ein Release am selben Tag (±2) existiert
+    const confirmed = list.some(x => past.has(discoKey(x.title)) || pastItems.some(k => Math.abs(k.date - x.date) <= 2 * 864e5));
+    if ((!past.size && !strict) || confirmed) return { ref, list };
   }
   return null;
 }
@@ -903,7 +1075,7 @@ function renderFilters() {
     for (const [val, text] of opts) {
       const b = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: text }));
       b.setAttribute('aria-pressed', filters[key] === val);
-      b.onclick = () => { filters[key] = val; store.set('kpop.filters', filters); renderFilters(); render(); };
+      b.onclick = () => { filters[key] = val; shown = {}; store.set('kpop.filters', filters); renderFilters(); render(); };
     }
   }
   const active = FILTERS.filter(([k]) => filters[k] !== DEFAULT_FILTERS[k]).length;
@@ -993,7 +1165,7 @@ function checkGroups() {
   }
 }
 
-$('q').oninput = () => render();
+$('q').oninput = () => { shown = {}; render(); };
 $('reload').onclick = load;
 $('saveGroups').onclick = () => {
   groups = [...new Set($('groups').value.split('\n').map(s => s.trim()).filter(Boolean))];
@@ -1120,10 +1292,34 @@ async function loadConcerts() {
   $('creload').disabled = false;
 }
 
+// Optionale Konzert-Filter (Standard: alles anzeigen)
+let cfilter = { city: '', mine: false };
+function renderConcertFilters() {
+  const box = $('cfilters'); box.innerHTML = '';
+  const cities = [...new Set(concerts.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+  const row = box.appendChild(Object.assign(document.createElement('div'), { className: 'frow' }));
+  row.appendChild(Object.assign(document.createElement('b'), { textContent: 'Filter (optional)' }));
+  for (const [val, text] of [['', 'Alle Städte'], ...cities.map(c => [c, c])]) {
+    const b = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: text }));
+    b.setAttribute('aria-pressed', cfilter.city === val);
+    b.onclick = () => { cfilter.city = val; renderConcerts(); };
+  }
+  const m = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '★ Nur meine Gruppen' }));
+  m.setAttribute('aria-pressed', cfilter.mine);
+  m.onclick = () => { cfilter.mine = !cfilter.mine; renderConcerts(); };
+}
+const concertIsMine = c => {
+  const text = norm([c.name, ...c.artists].join(' '));
+  return [...mine].some(v => v.length >= 3 && text.includes(v));
+};
+
 function renderConcerts(map) {
   if (map) concerts = [...map.values()].filter(c => (c.end || c.date) >= today).sort((a, b) => a.date - b.date || a.time.localeCompare(b.time));
   const q = $('cq').value.trim().toLowerCase();
-  const list = concerts.filter(c => !q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q));
+  if (cfilter.city && !concerts.some(c => c.city === cfilter.city)) cfilter.city = '';
+  renderConcertFilters();
+  const list = concerts.filter(c => (!q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q)) &&
+    (!cfilter.city || c.city === cfilter.city) && (!cfilter.mine || concertIsMine(c)));
   const box = $('concerts'); box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<div class="empty">Keine angekündigten Konzerte gefunden.</div>'; return; }
   let month = '', grid;
@@ -1196,7 +1392,7 @@ renderFilters(); showGroups();
 showTab(store.get('kpop.tab', 'today'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
 const cache = store.get('kpop.cache', null);
-if (cache?.v === 5 && Date.now() - cache.at < 6 * 36e5) {
+if (cache?.v === 6 && Date.now() - cache.at < 6 * 36e5) {
   render(new Map(revive(cache.list).map(r => [r.id, r])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
 }

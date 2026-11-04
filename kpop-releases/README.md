@@ -9,8 +9,9 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 - **Heute**: alle Releases von heute (und morgen) nach deutscher Uhrzeit, mit Countdown
 - **Demnächst** (eigener Tab): angekündigte Comebacks (bis ca. 5 Monate im Voraus), nach Tagen, inkl. deutscher Uhrzeit
 - **Neu** (eigener Tab): Releases der letzten 30 Tage, neueste zuerst, nach Tagen
+- Duplikate zwischen den Quellen werden zusammengeführt (Albumname ↔ Titelsong, Unit-Namen, ±1 Tag)
 - Alle K-Pop-Artists inkl. Solo-Releases; Releases von „Meine Gruppen“ (und ihren Mitgliedern) mit ★ markiert
-- Filter: Nur meine Gruppen · Gruppen/Solo · Album/EP/Single/OST · Zeitraum ±7/±14 Tage ·
+- Filter (optional, Standard: alles): Nur meine Gruppen · Nur Comebacks & Debüts · Gruppen/Solo · Album/EP/Single/OST · Zeitraum ±7/±14 Tage ·
   Japan-Releases und Pre-Releases ein-/ausblenden · Suche nach Artist oder Titel
 - Design: Auto (wie System) / Hell / Dunkel
 - Karte antippen → Tracklist (Titelsong mit ★)
@@ -20,7 +21,9 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 
 ## Datenquellen (alle ohne Key)
 - [KPOP OFFICIAL](https://kpopofficial.com/kpop-comebacks/) – Comeback-Kalender, nur koreanische Musik,
-  inkl. angekündigter Releases (Hauptquelle)
+  inkl. angekündigter Releases (Hauptquelle, mit Cover, Uhrzeit, Tracklist)
+- [kprofiles](https://kprofiles.com) – Monatslisten aller Releases (Idols, Solos, Sub-Units, Indie);
+  übernommen werden nur koreanische Künstler (🇰🇷-Flagge bzw. bekannte K-Pop-Artists), keine reinen MV-Releases
 - [Deezer](https://www.deezer.com) – vollständiger Katalog für die Diskographie und für Gruppen aus
   „Meine Gruppen“, die im Kalender fehlen (z. B. from20, cosmosy)
 - [MusicBrainz](https://musicbrainz.org) – zusätzlich für Gruppen, die im Kalender fehlen
@@ -28,6 +31,7 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 
 ## Konzerte in Deutschland (Tab „Konzerte“)
 - Alle angekündigten K-Pop-Konzerte in Deutschland ab heute, nach Monat gruppiert
+- Optionale Filter nach Stadt und „Nur meine Gruppen“ (Standard: alles)
 - Große Tourneen kommen ohne Key von KPOP OFFICIAL
 - Datum, Uhrzeit, Stadt, Halle, Status (abgesagt/verschoben), Vorverkaufsstart und Ticket-Link
 - Optional zusätzlich Ticketmaster (findet auch kleinere Konzerte): Suche nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
