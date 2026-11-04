@@ -48,7 +48,12 @@
   .chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .tabs { display: flex; gap: 2px; margin: 16px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-  .tab { white-space: nowrap; flex: none; }
+  .tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px;
+         padding: 8px 2px !important; font-size: 12px; white-space: nowrap; }
+  .tab .ti { font-size: 20px; line-height: 1; position: relative; }
+  .tab .tc { position: absolute; top: -6px; left: 70%; font-size: 10px; font-weight: 700; line-height: 1;
+             background: var(--accent); color: #fff; border-radius: 999px; padding: 2px 5px; }
+  .tab .tc:empty { display: none; }
   .tab { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none;
          padding: 10px 12px; font-weight: 600; color: var(--muted); }
   .tab[aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); }
@@ -110,11 +115,13 @@
 </header>
 <main>
   <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" data-tab="today">📅 Heute</button>
-    <button class="tab" role="tab" data-tab="releases">🎵 Releases</button>
-    <button class="tab" role="tab" data-tab="concerts">🎫 Konzerte</button>
+    <button class="tab" role="tab" data-tab="today"><span class="ti">📅<b class="tc"></b></span>Heute</button>
+    <button class="tab" role="tab" data-tab="upcoming"><span class="ti">🔜<b class="tc"></b></span>Demnächst</button>
+    <button class="tab" role="tab" data-tab="recent"><span class="ti">🆕<b class="tc"></b></span>Neu</button>
+    <button class="tab" role="tab" data-tab="concerts"><span class="ti">🎫<b class="tc"></b></span>Konzerte</button>
   </nav>
-  <div id="tab-releases">
+  <!-- Suche, Filter & „Meine Gruppen“ gelten für „Demnächst“ und „Neu“ -->
+  <div id="tools">
   <div class="toolbar">
     <input type="search" id="q" placeholder="Artist oder Titel suchen …" aria-label="Suche">
     <button id="filterBtn" aria-expanded="false">⚙️ Filter</button>
@@ -133,15 +140,13 @@
     <button id="resetGroups">Standardliste</button>
   </details>
 
+  </div>
   <div class="status" id="status"></div>
 
+  <div id="tab-upcoming">
   <section>
-    <h2>📅 Demnächst <span class="count" id="upCount"></span></h2>
-    <div class="grid" id="upcoming"></div>
-  </section>
-  <section>
-    <h2>🆕 Neu erschienen – letzte 30 Tage <span class="count" id="recentCount"></span></h2>
-    <div class="grid" id="recent"></div>
+    <h2>🔜 Demnächst <span class="count" id="upCount"></span></h2>
+    <div id="upcoming"></div>
   </section>
 
   <footer>
@@ -152,6 +157,15 @@
     Alle K-Pop-Artists inkl. Solo-Releases. Datum = offizielles Release-Datum in Korea (KST), „bei uns“ = deutsche Uhrzeit.
     Karte antippen für die Tracklist, Künstlernamen antippen für die ganze Diskographie.
   </footer>
+  </div>
+
+  <div id="tab-recent" hidden>
+  <section>
+    <h2>🆕 Neu erschienen – letzte 30 Tage <span class="count" id="recentCount"></span></h2>
+    <div id="recent"></div>
+  </section>
+  <footer>Neueste zuerst, nach Tag sortiert. Datum = Release-Datum in Korea (KST).
+    Karte antippen für die Tracklist, Künstlernamen antippen für die ganze Diskographie.</footer>
   </div>
 
   <div id="tab-today" hidden>
@@ -587,11 +601,37 @@ function render(map) {
   shownCount = list.length; updateStatus();
   const up = list.filter(r => r.date > today).sort((a, b) => a.date - b.date);
   const recent = list.filter(r => r.date <= today).sort((a, b) => b.date - a.date);
-  fill('upcoming', up, 'Keine angekündigten Releases gefunden.');
-  fill('recent', recent, 'Keine Releases in den letzten 30 Tagen gefunden.');
+  fillByDay('upcoming', up, 'Keine angekündigten Releases gefunden.');
+  fillByDay('recent', recent, 'Keine Releases in den letzten 30 Tagen gefunden.');
+  tabCount('upcoming', up.length);
+  tabCount('recent', recent.length);
   $('upCount').textContent = up.length;
   $('recentCount').textContent = recent.length;
   renderToday();
+}
+
+// Anzahl als kleines Abzeichen am Tab-Symbol
+const tabCount = (tab, n) => { document.querySelector(`.tab[data-tab="${tab}"] .tc`).textContent = n ? (n > 99 ? '99+' : n) : ''; };
+
+// Liste nach Tagen gruppiert („Heute“, „Gestern“, „Fr., 30. Okt.“ …)
+function fillByDay(id, list, emptyMsg) {
+  const el = $(id); el.innerHTML = '';
+  if (!list.length) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  const dayFmt = new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+  const monFmt = new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' });
+  let key = null, grid;
+  for (const r of list) {
+    const k = r.partial ? 'm' + r.date.getFullYear() + '-' + r.date.getMonth() : r.date.toDateString();
+    if (k !== key) {
+      key = k;
+      const n = Math.round((r.date - today) / 864e5);
+      const label = r.partial ? monFmt.format(r.date) + ' (Tag noch offen)'
+        : (n === 0 ? 'Heute · ' : n === -1 ? 'Gestern · ' : n === 1 ? 'Morgen · ' : '') + dayFmt.format(r.date);
+      el.appendChild(Object.assign(document.createElement('div'), { className: 'month', textContent: label }));
+      grid = el.appendChild(Object.assign(document.createElement('div'), { className: 'grid' }));
+    }
+    grid.appendChild(card(r));
+  }
 }
 
 function fill(id, list, emptyMsg) {
@@ -734,7 +774,7 @@ function renderToday() {
   $('tomorrowDate').textContent = dfmt.format(m);
   const n = dayList('todayList', t, 'Heute erscheinen keine K-Pop-Releases.');
   dayList('tomorrowList', m, 'Morgen erscheinen keine K-Pop-Releases.');
-  document.querySelector('.tab[data-tab="today"]').textContent = n ? `📅 Heute (${n})` : '📅 Heute';
+  tabCount('today', n);
 }
 setInterval(() => { if (!$('tab-today').hidden) renderToday(); }, 60000);   // Countdown aktualisieren
 
@@ -1137,8 +1177,11 @@ $('saveKey').onclick = () => { tmKey = $('tmKey').value.trim(); store.set('kpop.
 let concertsLoaded = false;
 const revive = list => list.map(x => ({ ...x, date: new Date(x.date), end: x.end ? new Date(x.end) : null }));
 function showTab(name) {
+  if (!['today', 'upcoming', 'recent', 'concerts'].includes(name)) name = 'today';
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
-  for (const t of ['today', 'releases', 'concerts']) $('tab-' + t).hidden = name !== t;
+  for (const t of ['today', 'upcoming', 'recent', 'concerts']) $('tab-' + t).hidden = name !== t;
+  $('tools').hidden = !['upcoming', 'recent'].includes(name);
+  $('status').hidden = name === 'concerts';
   store.set('kpop.tab', name);
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
@@ -1150,7 +1193,7 @@ function showTab(name) {
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
 
 renderFilters(); showGroups();
-showTab(store.get('kpop.tab', 'releases'));
+showTab(store.get('kpop.tab', 'today'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
 const cache = store.get('kpop.cache', null);
 if (cache?.v === 5 && Date.now() - cache.at < 6 * 36e5) {
