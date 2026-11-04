@@ -1363,7 +1363,8 @@ function wikiArtist(intro, display) {
     const m = head.match(re);
     if (!m) continue;
     const pos = m.index + m[1].length;
-    const score = (by >= 0 && pos > by ? 0 : 1000) + pos;   // nach „by“ bevorzugt, dann früheste Stelle
+    // nach „by“ bevorzugt, dann früheste Stelle, bei gleicher Stelle der längere Name („NCT 127“ statt „NCT“)
+    const score = (by >= 0 && pos > by ? 0 : 1e6) + pos * 100 - name.length;
     if (!best || score < best.score) best = { name, score };
   }
   if (best) return { name: best.name };
