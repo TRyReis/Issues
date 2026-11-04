@@ -46,7 +46,9 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 - Datum, Uhrzeit, Stadt, Halle, Status (abgesagt/verschoben), Vorverkaufsstart und Ticket-Link
 - Optional zusätzlich Ticketmaster (findet auch kleinere Konzerte): Suche nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
 
-**Optional:** ein kostenloser Ticketmaster API-Key.
+**Ticketmaster-Key in der Android-App:** wird beim Bauen aus dem Repository-Secret `TM_API_KEY` eingefügt
+(GitHub → Settings → Secrets and variables → Actions). Er steht nicht im Quellcode, wird verschleiert gespeichert und
+in der App nicht angezeigt. Ohne Secret kann man in der App (bzw. im Browser) wie bisher einen eigenen Key eintragen:
 1. Auf https://developer-acct.ticketmaster.com/user/register registrieren
 2. Unter „My Apps“ den **Consumer Key** kopieren
 3. In der App im Tab „Konzerte“ unter „Ticketmaster API-Key“ einfügen

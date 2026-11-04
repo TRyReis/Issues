@@ -43,6 +43,12 @@ public class MainActivity extends Activity {
             public void setDarkMode(final boolean dark) {
                 runOnUiThread(() -> applySystemBars(dark));
             }
+
+            // Eingebauter Ticketmaster-Key (beim Bauen aus einem GitHub-Secret eingefügt, verschleiert gespeichert)
+            @JavascriptInterface
+            public String tmKey() {
+                return decodeKey(BuildConfig.TM_KEY_ENC);
+            }
         }, "KpopApp");
 
         web.setWebViewClient(new WebViewClient() {
@@ -75,6 +81,17 @@ public class MainActivity extends Activity {
         if (state == null || web.restoreState(state) == null) {
             web.loadUrl("https://" + HOST + "/index.html");
         }
+    }
+
+    private static String decodeKey(String enc) {
+        if (enc == null || enc.isEmpty()) return "";
+        final String mask = "KpopRadar-2026";
+        String[] parts = enc.split(",");
+        StringBuilder sb = new StringBuilder(parts.length);
+        for (int i = 0; i < parts.length; i++) {
+            sb.append((char) (Integer.parseInt(parts[i].trim()) ^ mask.charAt(i % mask.length())));
+        }
+        return sb.toString();
     }
 
     @SuppressWarnings("deprecation")

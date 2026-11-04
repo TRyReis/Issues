@@ -10,9 +10,17 @@ android {
         applicationId = "de.kpopradar"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
+
+        // Ticketmaster-Key kommt beim Bauen aus dem GitHub-Secret TM_API_KEY (nicht im Quellcode).
+        // Er wird mit einer Maske verschleiert abgelegt und erst zur Laufzeit in der App entschlüsselt.
+        val tmKey = System.getenv("TM_API_KEY")?.trim() ?: ""
+        val mask = "KpopRadar-2026"
+        val enc = tmKey.mapIndexed { i, ch -> ch.code xor mask[i % mask.length].code }.joinToString(",")
+        buildConfigField("String", "TM_KEY_ENC", "\"$enc\"")
     }
+    buildFeatures { buildConfig = true }
 
     // Optional: fester Signatur-Schlüssel (für Updates ohne Neuinstallation),
     // wird in GitHub Actions aus Secrets erzeugt. Ohne Secrets: Debug-Signatur.

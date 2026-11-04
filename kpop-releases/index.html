@@ -1296,7 +1296,11 @@ const TM = 'https://app.ticketmaster.com/discovery/v2/events.json';
 const CITY_DE = { cologne: 'Köln', munich: 'München', nuremberg: 'Nürnberg', dusseldorf: 'Düsseldorf', frankfurt: 'Frankfurt am Main', hanover: 'Hannover' };
 const cityDE = c => CITY_DE[norm(c)] || c;
 const cityKey = c => norm(cityDE(c)).replace(/ammain$/, '');
-let tmKey = store.get('kpop.tmKey', '');
+// In der Android-App ist ein Ticketmaster-Key eingebaut (nicht sichtbar, nicht gespeichert).
+// Ein selbst eingetragener Key (nur Browser-Version) wird sonst weiter unterstützt.
+let builtInTmKey = '';
+try { builtInTmKey = window.KpopApp?.tmKey?.() || ''; } catch {}
+let tmKey = builtInTmKey || store.get('kpop.tmKey', '');
 let concerts = [];
 let tmLast = 0;
 
@@ -1626,7 +1630,7 @@ function toConcert(e) {
   const local = e.dates?.start?.localDate;
   if (!local) return null;
   return {
-    id: e.id, name: e.name, url: e.url, info: '',
+    id: e.id, name: e.name, url: e.url, info: '', tribute: /k-?pop\s*live!?|k-?pop\s*forever|tribute/i.test(e.name),
     artists: (e._embedded?.attractions || []).map(a => a.name),
     date: new Date(local + 'T00:00:00'), end: null,
     time: e.dates.start.noSpecificTime ? '' : (e.dates.start.localTime || '').slice(0, 5),
@@ -1654,56 +1658,61 @@ async function tmConcerts(onProgress) {
   return [...out.values()];
 }
 
+// Gleicher Termin aus mehreren Quellen? Gleicher Tag, gleiche Stadt UND gleicher Künstler
+// (sonst würden zwei verschiedene Konzerte am selben Tag in Berlin zusammengelegt).
+const concertText = c => norm(c.name + ' ' + (c.artists || []).join(' '));
+const concertKeys = c => (c.artists || []).flatMap(nameVariants).filter(k => k.length >= 3);
+function sameConcert(a, b) {
+  if (a.date.toDateString() !== b.date.toDateString() || cityKey(a.city) !== cityKey(b.city)) return false;
+  if (!!a.tribute !== !!b.tribute) return false;
+  const ta = concertText(a), tb = concertText(b);
+  // Kalender ohne Künstlerliste (KPOP OFFICIAL): Titel beginnt mit dem Künstler („ENHYPEN World Tour …“)
+  return concertKeys(a).some(k => tb.includes(k)) || concertKeys(b).some(k => ta.includes(k)) ||
+    (a.tribute && b.tribute);
+}
+
 async function loadConcerts() {
   $('creload').disabled = true;
   $('cstatus').textContent = 'Lade Tourdaten …';
-  const found = new Map();
-  const key = c => c.date.toDateString() + '|' + cityKey(c.city);
+  const found = new Map();   // id → Konzert
+  const findSame = c => [...found.values()].find(x => sameConcert(x, c));
   const errors = [];
+  // Neues Konzert eintragen oder mit vorhandenem zusammenführen; merge(vorhanden, neu) ergänzt Infos
+  const add = (c, merge) => { const same = findSame(c); if (same) merge(same, c); else found.set(c.id, c); };
+  const fillIn = (same, c) => {
+    same.url ||= c.url; same.venue ||= c.venue; same.wiki ||= c.src === 'wiki' ? c.info : '';
+    if (/cancel/.test(c.status)) same.status = c.status;
+  };
   try {
-    for (const c of await kpoConcerts()) found.set(key(c), c);
+    for (const c of await kpoConcerts()) add(c, fillIn);
     renderConcerts(found);
   } catch (e) { errors.push('KPOP OFFICIAL nicht erreichbar'); console.warn(e); }
   let rtcRest = [];
-  const addRtc = c => {
-    const k = key(c), same = found.get(k);
-    if (same) {   // gleicher Termin: fehlende Infos ergänzen
-      same.url ||= c.url; same.venue ||= c.venue;
-      if (c.status === 'cancelled') same.status = 'cancelled';
-    } else found.set(k, c);
-  };
   try {
     const r = await rtcConcerts(t => $('cstatus').textContent = t);
-    r.ok.forEach(addRtc); rtcRest = r.pending;
+    r.ok.forEach(c => add(c, fillIn)); rtcRest = r.pending;
     renderConcerts(found);
   } catch (e) { errors.push('K-Pop-Tourkalender nicht erreichbar'); console.warn(e); }
   try {
-    for (const c of await wikiConcerts(t => $('cstatus').textContent = t)) {
-      const k = key(c), same = found.get(k);
-      if (same) { same.wiki ||= c.info; if (c.status === 'cancelled') same.status = 'cancelled'; }   // gleicher Termin: Infos ergänzen
-      else found.set(k, c);
-    }
+    for (const c of await wikiConcerts(t => $('cstatus').textContent = t)) add(c, fillIn);
     renderConcerts(found);
   } catch (e) { errors.push('Wikipedia nicht erreichbar'); console.warn(e); }
   if (tmKey) {
     try {
-      for (const c of await tmConcerts(t => $('cstatus').textContent = t)) {
-        const k = key(c), same = found.get(k);
-        if (same) {   // gleicher Termin aus anderer Quelle: Ticketmaster-Status (live, offiziell) hat Vorrang
-          Object.assign(same, { url: same.url || c.url, time: same.time || c.time, venue: same.venue || c.venue,
-            status: c.status || same.status, onsale: c.onsale || same.onsale, tm: true });
-        } else found.set(k + '|' + c.id, { ...c, tm: true });
-      }
-    } catch (e) { errors.push(e.message); }
+      // Ticketmaster-Status (live, offiziell) hat Vorrang; Varianten wie „Premium Packages“/„Box-Seat“ werden zusammengelegt
+      for (const c of await tmConcerts(t => $('cstatus').textContent = t))
+        add({ ...c, tm: true }, (same, n) => Object.assign(same, { url: same.url || n.url, time: same.time || n.time,
+          venue: same.venue || n.venue, status: n.status || same.status, onsale: n.onsale || same.onsale, tm: true }));
+    } catch (e) { errors.push(builtInTmKey && /Key/.test(e.message) ? 'Ticketmaster nicht erreichbar' : e.message); }
   }
   renderConcerts(found);
-  if (rtcRest.length) await rtcPending(rtcRest, t => $('cstatus').textContent = t, c => { addRtc(c); renderConcerts(found); });
+  if (rtcRest.length) await rtcPending(rtcRest, t => $('cstatus').textContent = t, c => { add(c, fillIn); renderConcerts(found); });
   $('cstatus').innerHTML = '';
   $('cstatus').append(`${concerts.length} K-Pop-Konzerte in Deutschland · Stand ${new Date().toLocaleTimeString('de-DE')}`);
   if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err',
     textContent: '⚠️ ' + errors.join(' · ') + ' – Termine von dort fehlen gerade. Später „Aktualisieren“ tippen.' }));
-  if (errors.some(e => /Key/.test(e))) $('keyDetails').open = true;
-  store.set('kpop.ccache', { v: 6, at: Date.now(), list: [...found.values()] });
+  if (!builtInTmKey && errors.some(e => /Key/.test(e))) $('keyDetails').open = true;
+  store.set('kpop.ccache', { v: 7, at: Date.now(), list: [...found.values()] });
   $('creload').disabled = false;
 }
 
@@ -1809,8 +1818,9 @@ function gigCard(c) {
 
 $('cq').oninput = () => renderConcerts();
 $('creload').onclick = loadConcerts;
-$('tmKey').value = tmKey;
-$('saveKey').onclick = () => { tmKey = $('tmKey').value.trim(); store.set('kpop.tmKey', tmKey); $('keyDetails').open = false; loadConcerts(); };
+$('tmKey').value = builtInTmKey ? '' : tmKey;
+if (builtInTmKey) $('keyDetails').hidden = true;   // eingebauter Key → kein Eingabefeld, nichts anzeigen
+$('saveKey').onclick = () => { if (builtInTmKey) return; tmKey = $('tmKey').value.trim(); store.set('kpop.tmKey', tmKey); $('keyDetails').open = false; loadConcerts(); };
 
 // --- Tabs ---
 let concertsLoaded = false;
@@ -1825,7 +1835,7 @@ function showTab(name) {
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
     const cc = store.get('kpop.ccache', null);
-    if (cc?.v === 6 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
+    if (cc?.v === 7 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
     loadConcerts();
   }
 }

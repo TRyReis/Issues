@@ -43,6 +43,8 @@ jobs:
         env:
           KS_PASSWORD: ${{ secrets.KS_PASSWORD }}
           KS_ALIAS: ${{ secrets.KS_ALIAS }}
+          # Ticketmaster-Key aus dem Repository-Secret TM_API_KEY (wird verschleiert in die App eingebaut)
+          TM_API_KEY: ${{ secrets.TM_API_KEY }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: APK umbenennen
