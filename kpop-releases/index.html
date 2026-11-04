@@ -47,7 +47,8 @@
     border-radius: 999px; padding: 7px 14px; font: inherit; cursor: pointer; }
   .chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .tabs { display: flex; gap: 6px; margin: 16px 0 4px; border-bottom: 1px solid var(--line); }
+  .tabs { display: flex; gap: 2px; margin: 16px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+  .tab { white-space: nowrap; flex: none; }
   .tab { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none;
          padding: 10px 12px; font-weight: 600; color: var(--muted); }
   .tab[aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); }
@@ -109,8 +110,9 @@
 </header>
 <main>
   <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="today">📅 Heute</button>
     <button class="tab" role="tab" data-tab="releases">🎵 Releases</button>
-    <button class="tab" role="tab" data-tab="concerts">🎫 Konzerte in Deutschland</button>
+    <button class="tab" role="tab" data-tab="concerts">🎫 Konzerte</button>
   </nav>
   <div id="tab-releases">
   <div class="toolbar">
@@ -152,7 +154,19 @@
   </footer>
   </div>
 
+  <div id="tab-today" hidden>
+    <h2>📅 Heute <span class="count" id="todayDate"></span></h2>
+    <div class="grid" id="todayList"></div>
+    <h2>🔜 Morgen <span class="count" id="tomorrowDate"></span></h2>
+    <div class="grid" id="tomorrowList"></div>
+    <footer>
+      Alle K-Pop-Releases, sortiert nach deutscher Uhrzeit. Als „heute“ zählt, was heute bei uns erscheint
+      (Releases um Mitternacht in Korea kommen bei uns schon am Vortag). ★ = deine Gruppen.
+    </footer>
+  </div>
+
   <div id="tab-concerts" hidden>
+    <h2>🎫 Konzerte in Deutschland</h2>
     <div class="toolbar">
       <input type="search" id="cq" placeholder="Gruppe, Stadt oder Halle filtern …" aria-label="Konzerte filtern">
       <button id="creload" class="primary">↻ Aktualisieren</button>
@@ -276,13 +290,17 @@ function parseKpoDate(text) {
   return null;
 }
 
-// „2 PM KST“ → deutsche Uhrzeit
-function kstToGerman(date, text) {
+// „2 PM KST“ → genauer Zeitpunkt (Korea = UTC+9, ohne Sommerzeit)
+function kstMoment(date, text) {
   const m = text.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*KST/i);
-  if (!m) return '';
+  if (!m) return null;
   let h = +m[1] % 12; if (/pm/i.test(m[3])) h += 12;
-  const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), h - 9, +(m[2] || 0)));
-  return utc.toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit' }) + ' Uhr';
+  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), h - 9, +(m[2] || 0)));
+}
+// … als deutsche Uhrzeit
+function kstToGerman(date, text) {
+  const utc = kstMoment(date, text);
+  return utc ? utc.toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit' }) + ' Uhr' : '';
 }
 
 // ================= Releases (KPOP OFFICIAL) =================
@@ -372,6 +390,7 @@ function parseRelease(x, windowed = true) {
     pre: /pre-?release/i.test(left),
     names: [...groupNames, ...soloNames].flatMap(nameVariants),
     date: d.date, partial: d.partial, timeDE: d.partial ? '' : kstToGerman(d.date, excerpt),
+    at: d.partial ? null : (kstMoment(d.date, excerpt)?.getTime() ?? null),
     cover: mediaUrl.get(x.featured_media) || ''
   };
 }
@@ -408,7 +427,7 @@ async function load() {
     checkGroups();
     loadedAt = new Date();
     updateStatus();
-    store.set('kpop.cache', { v: 4, at: Date.now(), list: [...found.values()] });
+    store.set('kpop.cache', { v: 5, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
   } finally {
@@ -572,6 +591,7 @@ function render(map) {
   fill('recent', recent, 'Keine Releases in den letzten 30 Tagen gefunden.');
   $('upCount').textContent = up.length;
   $('recentCount').textContent = recent.length;
+  renderToday();
 }
 
 function fill(id, list, emptyMsg) {
@@ -671,6 +691,52 @@ async function showTracks(r, box) {
   a.style.fontSize = '12px'; a.onclick = e => e.stopPropagation();
   box.appendChild(a);
 }
+
+// ================= Tab „Heute“ =================
+const startOfDay = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+// Erscheinungstag bei uns: mit bekannter Uhrzeit der deutsche Kalendertag, sonst das Release-Datum
+const dayHere = r => r.at ? startOfDay(r.at) : r.date;
+const hhmm = t => new Date(t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+
+function untilText(ms) {
+  const min = Math.ceil(ms / 6e4);
+  if (min < 60) return `in ${min} Min.`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? `in ${h} Std. ${m} Min.` : `in ${h} Std.`;
+}
+
+function dayList(boxId, day, emptyMsg) {
+  const now = Date.now();
+  const list = releases.filter(r => !r.partial && dayHere(r).getTime() === day.getTime())
+    .sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || (isMine(b) - isMine(a)));
+  const box = $(boxId); box.innerHTML = '';
+  if (!list.length) { box.innerHTML = `<div class="empty">${emptyMsg}</div>`; return 0; }
+  for (const r of list) {
+    const el = card(r), meta = el.querySelector('.meta');
+    // Datum/„bei uns“-Angabe ist hier doppelt → entfernen; abweichenden Korea-Tag extra nennen
+    meta.querySelectorAll('.badge').forEach(b => { if (/^🇩🇪/.test(b.textContent) || b.textContent.startsWith(fmt.format(r.date))) b.remove(); });
+    if (r.date.getTime() !== day.getTime())
+      meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge plain', textContent: `🇰🇷 in Korea: ${fmt.format(r.date)}` }));
+    const s = document.createElement('span');
+    if (!r.at) { s.className = 'badge plain'; s.textContent = '🕐 Uhrzeit noch offen'; }
+    else if (now >= r.at) { s.className = 'badge soon'; s.textContent = `✅ Erschienen um ${hhmm(r.at)} Uhr`; }
+    else { s.className = 'badge warn'; s.textContent = `⏰ ${hhmm(r.at)} Uhr · ${untilText(r.at - now)}`; }
+    meta.prepend(s);
+    box.appendChild(el);
+  }
+  return list.length;
+}
+
+function renderToday() {
+  const t = startOfDay(new Date()), m = addDays(t, 1);
+  const dfmt = new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+  $('todayDate').textContent = dfmt.format(t);
+  $('tomorrowDate').textContent = dfmt.format(m);
+  const n = dayList('todayList', t, 'Heute erscheinen keine K-Pop-Releases.');
+  dayList('tomorrowList', m, 'Morgen erscheinen keine K-Pop-Releases.');
+  document.querySelector('.tab[data-tab="today"]').textContent = n ? `📅 Heute (${n})` : '📅 Heute';
+}
+setInterval(() => { if (!$('tab-today').hidden) renderToday(); }, 60000);   // Countdown aktualisieren
 
 // ================= Diskographie =================
 let discoToken = 0;
@@ -1072,8 +1138,7 @@ let concertsLoaded = false;
 const revive = list => list.map(x => ({ ...x, date: new Date(x.date), end: x.end ? new Date(x.end) : null }));
 function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
-  $('tab-releases').hidden = name !== 'releases';
-  $('tab-concerts').hidden = name !== 'concerts';
+  for (const t of ['today', 'releases', 'concerts']) $('tab-' + t).hidden = name !== t;
   store.set('kpop.tab', name);
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
@@ -1088,7 +1153,7 @@ renderFilters(); showGroups();
 showTab(store.get('kpop.tab', 'releases'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
 const cache = store.get('kpop.cache', null);
-if (cache?.v === 4 && Date.now() - cache.at < 6 * 36e5) {
+if (cache?.v === 5 && Date.now() - cache.at < 6 * 36e5) {
   render(new Map(revive(cache.list).map(r => [r.id, r])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
 }

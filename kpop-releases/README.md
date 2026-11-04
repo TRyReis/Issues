@@ -6,6 +6,7 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 **Starten:** `index.html` im Browser öffnen (Doppelklick genügt).
 
 ## Funktionen
+- **Heute**: alle Releases von heute (und morgen) nach deutscher Uhrzeit, mit Countdown
 - **Demnächst**: angekündigte Comebacks (bis ca. 5 Monate im Voraus), inkl. deutscher Uhrzeit
 - **Neu erschienen**: Releases der letzten 30 Tage, neueste zuerst
 - Alle K-Pop-Artists inkl. Solo-Releases; Releases von „Meine Gruppen“ (und ihren Mitgliedern) mit ★ markiert
