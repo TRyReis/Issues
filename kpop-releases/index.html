@@ -96,7 +96,9 @@
   .sheet-head { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line);
                 display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; max-width: 980px; margin: 0 auto; }
   .sheet-head h1 { font-size: 22px; overflow-wrap: anywhere; }
+  .sheet-head { flex-wrap: wrap; justify-content: space-between; }
   .sheet-head button { flex: none; }
+  .sheet-title { flex: 1 0 100%; min-width: 0; }
   .sheet-body { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; }
   a { color: var(--accent); }
 </style>
@@ -138,6 +140,12 @@
     <div id="groupCheck" class="sub"></div>
     <button id="saveGroups" class="primary">Speichern</button>
     <button id="resetGroups">Standardliste</button>
+  </details>
+
+  <details id="hiddenBox" hidden>
+    <summary>Ausgeblendete Künstler (<span id="hiddenCount">0</span>)</summary>
+    <p class="sub">Antippen, um einen Künstler wieder anzuzeigen.</p>
+    <div class="frow" id="hiddenList"></div>
   </details>
 
   </div>
@@ -210,7 +218,8 @@
 <div id="disco" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="discoTitle">
   <div class="sheet-head">
     <button id="discoClose" aria-label="Zurück">← Zurück</button>
-    <div style="min-width:0"><h1 id="discoTitle"></h1><p class="sub" id="discoSub"></p></div>
+    <button id="discoHide" title="Diesen Künstler in allen Listen ausblenden">🚫 Ausblenden</button>
+    <div class="sheet-title"><h1 id="discoTitle"></h1><p class="sub" id="discoSub"></p></div>
   </div>
   <div class="sheet-body" id="discoBody"></div>
 </div>
@@ -372,6 +381,8 @@ async function fetchAlbums(query, onBatch) {
 }
 
 function parseRelease(x, windowed = true) {
+  // Reine Schauspieler-Releases (z. B. Drama-Songs von Schauspielern) sind kein K-Pop
+  if ((x.class_list || []).includes('artist-type-actor') && !(x.group || []).length) return null;
   const excerpt = strip(x.excerpt?.rendered);
   let d = parseKpoDate(excerpt);
   if (!d) {  // Fallback: Monats-Kategorie, z. B. „album-month-year-november-2026“
@@ -448,8 +459,8 @@ function kprofItem(flag, artistRaw, titleRaw, kind, date, partial, link) {
     japan: /japan/i.test(kind), ost: false, pre: /pre-?(release|debut)/i.test(kind),
     major: /comeback|debut/i.test(kind),
     names: [...new Set([main, ...parts, ...brackets].flatMap(nameVariants))],
-    groupNames: [...new Set([main, ...parts, ...brackets].flatMap(nameVariants))],   // Kandidaten für die Gruppenprüfung
-    soloParts: parts.length > 1 || brackets.length > 0,
+    kpParts: [...new Set([main, ...parts].flatMap(nameVariants))],     // Künstlername(n) selbst
+    kpGroups: [...new Set(brackets.flatMap(nameVariants))],            // [Gruppe] in eckigen Klammern
     date, partial, timeDE: '', at: null, cover: ''
   };
 }
@@ -487,8 +498,7 @@ function parseKprofiles(html, pageYear, pageMonth, link) {
       it = kprofItem(flag, m[1], m[2], m[6], new Date(+m[5], +m[3] - 1, partial ? 1 : +m[4]), partial, link);
     }
     if (!it || it.date < (it.partial ? new Date(from.getFullYear(), from.getMonth(), 1) : from) || it.date > to) continue;
-    if (/🇰🇷/u.test(flag)) items.push(it);                    // koreanische Künstler
-    else noFlag.push(it);   // andere/keine Flagge (z. B. &TEAM 🇯🇵): nur wenn als K-Pop-Artist bekannt oder in „Meine Gruppen“
+    (/🇰🇷/u.test(flag) ? items : noFlag).push(it);   // geprüft wird später in isKpopEntry()
   }
   return { items, noFlag };
 }
@@ -507,6 +517,44 @@ async function kprofReleases() {
     } catch (e) { console.warn('kprofiles', MONTHS[mo], e.message); }
   }));
   return { items, noFlag };
+}
+
+// Ist ein kprofiles-Eintrag K-Pop? kprofiles listet ALLE koreanische Musik (Trot, Ballade, Indie, Rock, Hip-Hop …).
+// Antwort: 'yes', 'no' oder 'mb' (= MusicBrainz muss das Genre k-pop bestätigen)
+//  • Mitglied einer bekannten K-Pop-Gruppe („JIWOONG [ZEROBASEONE]“) → yes
+//  • in „Meine Gruppen“ → yes
+//  • Künstler hat Releases im K-Pop-Kalender (KPOP OFFICIAL) → yes
+//  • ohne 🇰🇷-Flagge: nur bekannte K-Pop-GRUPPE (&TEAM, NiziU) → yes, sonst no
+//  • sonst bekannter Name in der K-Pop-Datenbank → mb (die enthält auch Trot-/Balladen-Sänger), unbekannt → no
+function kpopCheck(kpoNames) {
+  const groupSet = new Set(knownGroupNames.flatMap(nameVariants));
+  const groupRaw = new Set(knownGroupNames);
+  const soloPlain = new Set(knownNames.filter(n => !groupRaw.has(n)).map(cleanName)
+    .filter(n => !/\(.*\)\s*$/.test(n)).flatMap(nameVariants));
+  return (it, korean) => {
+    if (it.names.some(n => mine.has(n))) return 'yes';
+    if (it.kpGroups.some(n => groupSet.has(n))) return 'yes';
+    if (!korean) return it.kpParts.some(n => groupSet.has(n)) ? 'yes' : 'no';
+    if (it.kpParts.some(n => kpoNames.has(n))) return 'yes';
+    if (it.kpGroups.length === 0 && it.kpParts.some(n => groupSet.has(n) || soloPlain.has(n))) return 'mb';
+    return 'no';
+  };
+}
+
+// MusicBrainz: Ist der Künstler (exakter Name, nicht japanisch) als k-pop getaggt? Ergebnis 30 Tage gemerkt.
+let mbGenre = store.get('kpop.mbGenre', {});
+async function mbIsKpop(name) {
+  const c = mbGenre[name];
+  if (c && Date.now() - c.at < 30 * 864e5) return c.ok;
+  const want = new Set(nameVariants(name));
+  const q = `artist:"${name.replace(/(["\\])/g, '\\$1')}" OR alias:"${name.replace(/(["\\])/g, '\\$1')}"`;
+  const r = await mb(`artist?query=${encodeURIComponent(q)}&limit=10`);
+  const ok = (r.artists || []).some(a => (nameVariants(a.name).some(v => want.has(v)) ||
+      (a.aliases || []).some(al => nameVariants(al.name).some(v => want.has(v)))) &&
+    a.country !== 'JP' && (a.tags || []).some(t => KPOP_TAGS.has(norm(t.name))));
+  mbGenre[name] = { ok, at: Date.now() };
+  store.set('kpop.mbGenre', mbGenre);
+  return ok;
 }
 
 // ================= Duplikate zwischen den Quellen zusammenführen =================
@@ -567,19 +615,30 @@ async function load() {
       render(found);
     });
     render(found);
-    // Zweite Quelle: kprofiles (alle koreanischen Releases des Monats)
+    // Zweite Quelle: kprofiles – dort steht ALLE koreanische Musik (auch Indie, Ballade, Produzenten …),
+    // deshalb wird jeder Eintrag gegen die K-Pop-Künstlerliste von KPOP OFFICIAL geprüft
     $('status').textContent = 'Lade weitere Releases (kprofiles) …';
     const kp = await kprofReleases().catch(e => { console.warn(e); return { items: [], noFlag: [] }; });
-    mergeInto(found, kp.items);
-    render(found);
-    // Gruppen, die der Comeback-Kalender nicht kennt → Deezer + MusicBrainz
     try {
       await getKnownNames();
       const known = new Set(knownNames.flatMap(nameVariants));
-      // Ohne 🇰🇷-Flagge: nur, wenn die GRUPPE als K-Pop bekannt ist („LAY [EXO]“, „&TEAM“) oder in „Meine Gruppen“ –
-      // Solo-Vornamen wie „JIN“ oder „HANA“ sind zu mehrdeutig
-      const knownGroups = new Set(knownGroupNames.flatMap(nameVariants));
-      mergeInto(found, kp.noFlag.filter(it => it.groupNames.some(n => knownGroups.has(n) || mine.has(n))));
+      const kpoNames = new Set([...found.values()].filter(r => !r.src).flatMap(r => r.names));
+      const kc = kpopCheck(kpoNames);
+      const verdict = it => kc(it, it.flag ? /🇰🇷/u.test(it.flag) : !kp.noFlag.includes(it));
+      const all = [...kp.items, ...kp.noFlag];
+      mergeInto(found, all.filter(it => verdict(it) === 'yes'));
+      render(found);
+      // Rest: Genre bei MusicBrainz bestätigen lassen (je Künstler einmal, max. 1 Anfrage/s)
+      const pending = all.filter(it => verdict(it) === 'mb');
+      const names = [...new Set(pending.map(it => it.artist.replace(/\s*\[[^\]]*\]/g, '').trim()))];
+      for (let i = 0; i < names.length; i++) {
+        const cached = mbGenre[names[i]] && Date.now() - mbGenre[names[i]].at < 30 * 864e5;
+        if (!cached) $('status').textContent = `Prüfe, ob Künstler K-Pop sind (${i + 1}/${names.length}) …`;
+        let ok = false;
+        try { ok = await mbIsKpop(names[i]); } catch (e) { console.warn('MusicBrainz', names[i], e.message); }
+        if (ok) mergeInto(found, pending.filter(it => it.artist.replace(/\s*\[[^\]]*\]/g, '').trim() === names[i]));
+        if (!cached && (i % 5 === 4 || i === names.length - 1)) render(found);
+      }
       const gaps = groups.filter(g => !nameVariants(g).some(v => known.has(v)));
       if (gaps.length) {
         $('status').textContent = `Suche ${gaps.length} weitere Gruppe(n) bei Deezer & MusicBrainz …`;
@@ -590,7 +649,7 @@ async function load() {
     checkGroups();
     loadedAt = new Date();
     updateStatus();
-    store.set('kpop.cache', { v: 6, at: Date.now(), list: [...found.values()] });
+    store.set('kpop.cache', { v: 8, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Internetverbindung prüfen und erneut versuchen.</span>`;
   } finally {
@@ -725,7 +784,28 @@ let loadedAt = null, shownCount = 0;
 let mine = new Set(groups.flatMap(nameVariants));
 const isMine = r => r.names.some(n => mine.has(n));
 
+// Vom Nutzer ausgeblendete Künstler (z. B. Grenzfälle, die man nicht als K-Pop sieht)
+let hidden = store.get('kpop.hidden', []);
+const hiddenSet = () => new Set(hidden.flatMap(nameVariants));
+let hiddenNow = hiddenSet();
+const isHidden = r => (r.refs?.length ? r.refs.some(ref => nameVariants(ref.name).some(v => hiddenNow.has(v)))
+                                       : nameVariants(r.artist).some(v => hiddenNow.has(v)));
+function setHidden(name, hide) {
+  hidden = hide ? [...new Set([...hidden, name])] : hidden.filter(h => h !== name);
+  store.set('kpop.hidden', hidden); hiddenNow = hiddenSet();
+  renderHidden(); render();
+}
+function renderHidden() {
+  $('hiddenBox').hidden = !hidden.length; $('hiddenCount').textContent = hidden.length;
+  $('hiddenList').innerHTML = '';
+  for (const h of hidden) {
+    const b = $('hiddenList').appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '↩ ' + h }));
+    b.onclick = () => setHidden(h, false);
+  }
+}
+
 function passes(r) {
+  if (isHidden(r)) return false;
   const f = filters, days = +f.days;
   if (f.scope === 'mine' && !isMine(r)) return false;
   if (f.kind === 'group' && r.solo) return false;
@@ -908,7 +988,7 @@ function untilText(ms) {
 
 function dayList(boxId, day, emptyMsg) {
   const now = Date.now();
-  const list = releases.filter(r => !r.partial && dayHere(r).getTime() === day.getTime())
+  const list = releases.filter(r => !r.partial && !isHidden(r) && dayHere(r).getTime() === day.getTime())
     .sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || (isMine(b) - isMine(a)));
   const box = $(boxId); box.innerHTML = '';
   if (!list.length) { box.innerHTML = `<div class="empty">${emptyMsg}</div>`; return 0; }
@@ -943,6 +1023,10 @@ setInterval(() => { if (!$('tab-today').hidden) renderToday(); }, 60000);   // C
 let discoToken = 0;
 async function openDisco(ref) {
   const token = ++discoToken;
+  const isHid = () => hidden.includes(ref.name);
+  const hb = $('discoHide');
+  hb.textContent = isHid() ? '↩ Wieder anzeigen' : '🚫 Ausblenden';
+  hb.onclick = () => { setHidden(ref.name, !isHid()); hb.textContent = isHid() ? '↩ Wieder anzeigen' : '🚫 Ausblenden'; };
   if (!$('disco').hidden) history.replaceState({ disco: 1 }, '');
   else history.pushState({ disco: 1 }, '');
   $('disco').hidden = false; document.body.style.overflow = 'hidden';
@@ -1396,11 +1480,11 @@ function showTab(name) {
 }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
 
-renderFilters(); showGroups();
+renderFilters(); showGroups(); renderHidden();
 showTab(store.get('kpop.tab', 'today'));
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
 const cache = store.get('kpop.cache', null);
-if (cache?.v === 6 && Date.now() - cache.at < 6 * 36e5) {
+if (cache?.v === 8 && Date.now() - cache.at < 6 * 36e5) {
   render(new Map(revive(cache.list).map(r => [r.id, r])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
 }

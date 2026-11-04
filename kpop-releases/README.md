@@ -14,6 +14,7 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 - Filter (optional, Standard: alles): Nur meine Gruppen · Nur Comebacks & Debüts · Gruppen/Solo · Album/EP/Single/OST · Zeitraum ±7/±14 Tage ·
   Japan-Releases und Pre-Releases ein-/ausblenden · Suche nach Artist oder Titel
 - Design: Auto (wie System) / Hell / Dunkel
+- Künstler, die man nicht sehen will, lassen sich in der Diskographie ausblenden (rückgängig unter „Ausgeblendete Künstler“)
 - Karte antippen → Tracklist (Titelsong mit ★)
 - Künstlernamen antippen → **komplette Diskographie** nach Jahren (inkl. angekündigter Releases
   und Solo-Releases der Mitglieder)
@@ -22,8 +23,10 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 ## Datenquellen (alle ohne Key)
 - [KPOP OFFICIAL](https://kpopofficial.com/kpop-comebacks/) – Comeback-Kalender, nur koreanische Musik,
   inkl. angekündigter Releases (Hauptquelle, mit Cover, Uhrzeit, Tracklist)
-- [kprofiles](https://kprofiles.com) – Monatslisten aller Releases (Idols, Solos, Sub-Units, Indie);
-  übernommen werden koreanische Künstler (🇰🇷-Flagge) sowie Künstler anderer Länder, deren Gruppe als K-Pop bekannt ist (z. B. &TEAM, NiziU, LAY [EXO]) oder die in „Meine Gruppen“ stehen; keine reinen MV-Releases
+- [kprofiles](https://kprofiles.com) – Monatslisten aller koreanischen Releases. Weil dort auch Trot, Ballade,
+  Indie, Rock und Hip-Hop stehen, wird jeder Eintrag geprüft. Übernommen wird nur, wer Mitglied einer bekannten
+  K-Pop-Gruppe ist, im K-Pop-Kalender Releases hat, in „Meine Gruppen“ steht oder laut MusicBrainz als k-pop
+  eingestuft ist. Ohne 🇰🇷 nur bekannte K-Pop-Gruppen (&TEAM, NiziU). Keine reinen MV-Releases
 - [Deezer](https://www.deezer.com) – vollständiger Katalog für die Diskographie und für Gruppen aus
   „Meine Gruppen“, die im Kalender fehlen (z. B. from20, cosmosy)
 - [MusicBrainz](https://musicbrainz.org) – zusätzlich für Gruppen, die im Kalender fehlen
