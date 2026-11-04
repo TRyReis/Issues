@@ -34,6 +34,7 @@
   .frow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
   .frow > b { width: 100%; font-size: 13px; color: var(--muted); font-weight: 600; }
   .chip { padding: 6px 12px; }
+  select.chip { max-width: 100%; appearance: auto; }
   h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; }
   .sub { color: var(--muted); margin: 4px 0 0; }
   main { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; }
@@ -209,6 +210,7 @@
     <div id="concerts"></div>
     <footer>
       Daten: <a href="https://kpopofficial.com" target="_blank" rel="noopener">KPOP OFFICIAL</a>,
+      <a href="https://kpopingermany.com/k-pop-events-in-deutschland/" target="_blank" rel="noopener">K-Pop-Tourkalender von Radio:Active / KPOP IN GERMANY</a>,
       <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> (Tourseiten großer K-Pop-Tourneen)
       und (mit Key) <a href="https://developer.ticketmaster.com" target="_blank" rel="noopener">Ticketmaster</a>.
       Termine bitte vor dem Ticketkauf beim Veranstalter prüfen.
@@ -1490,7 +1492,90 @@ async function wikiConcerts(onProgress) {
   return out;
 }
 
-// 3) Ticketmaster (optional)
+// 3) Radio:Active K-Pop-Tourkalender (kpopingermany.com / radioactive-mag.com) – deutscher K-Pop-Eventkalender
+//    mit allen Deutschland-Terminen, Status (findet statt / abgesagt), Ticketstatus und Ticket-Link
+const RTC_SOURCES = [
+  'https://kpopingermany.com/wp-json/wp/v2/posts/122?_fields=content',
+  'https://radioactive-mag.com/wp-json/wp/v2/pages/110170?_fields=content'
+];
+const RTC_TYPES = { festival: 'Festival', fansign: 'Fan-Signing', convention: 'Convention', 'fan-event': 'Fan-Event', fanmeeting: 'Fanmeeting', showcase: 'Showcase' };
+const RTC_TICKETS = { soldout: 'Ausverkauft', low: 'Nur noch wenige Tickets', soon: 'Vorverkauf bald' };
+
+function parseRtc(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const out = [];
+  for (const card of doc.querySelectorAll('.rtc-card[data-modal]')) {
+    const modal = doc.getElementById(card.dataset.modal);
+    if (!modal) continue;
+    const title = (modal.querySelector('.rtc-modal-title')?.textContent || '').replace(/\s+/g, ' ').trim();
+    const sub = (modal.querySelector('.rtc-modal-subtitle')?.textContent || '').replace(/\s+/g, ' ').trim();
+    const ticketLink = card.querySelector('a.rtc-btn-secondary')?.href || '';
+    const section = [...modal.querySelectorAll('.rtc-section')].find(sct => /deutschland termine/i.test(sct.querySelector('h3')?.textContent || ''));
+    if (!title || !section) continue;
+    for (const item of section.querySelectorAll('.rtc-date-item')) {
+      // „<strong>Berlin</strong><br>Uber Arena<br>26.01.2027“ – Stadt aus der Terminliste (zuverlässiger als die Kartenüberschrift)
+      const lines = item.innerHTML.split(/<br\s*\/?>/i).map(strip).filter(Boolean);
+      const dl = lines.findIndex(l => /^\d{2}\.\d{2}\.\d{4}/.test(l));
+      if (dl < 0) continue;
+      const [d, m, y] = lines[dl].slice(0, 10).split('.').map(Number);
+      const date = new Date(y, m - 1, d);
+      const venue = lines.slice(1, dl).join(', ');
+      const tribute = /k-?pop\s*live!?|k-?pop\s*forever|tribute/i.test(title + ' ' + sub);
+      out.push({
+        id: 'rtc-' + norm(title) + '-' + lines[dl].slice(0, 10) + '-' + norm(lines[0]), src: 'rtc',
+        name: sub && norm(sub) !== norm(title) ? `${title} – ${sub}` : title,
+        artists: tribute ? [] : title.split(/\s*,\s*|\s+[x×]\s+|\s*&\s*(?=[A-Z])/).filter(Boolean),
+        date, end: null, time: '', city: cityDE(lines[0]), venue: /^tba$/i.test(venue) ? '' : venue,
+        status: card.dataset.event === 'cancelled' ? 'cancelled' : '', ticketState: card.dataset.ticket || '',
+        kind: card.dataset.type || 'concert', tribute,
+        url: ticketLink && !/kpopingermany\.com|radioactive-mag\.com/.test(ticketLink) ? ticketLink : '',
+        info: 'https://kpopingermany.com/k-pop-events-in-deutschland/', onsale: ''
+      });
+    }
+  }
+  return out;
+}
+
+async function rtcConcerts(onProgress) {
+  const c = store.get('kpop.rtcConc', null);
+  let list = c?.v === 1 && Date.now() - c.at < 6 * 36e5 ? c.list.map(x => ({ ...x, date: new Date(x.date) })) : null;
+  if (!list) {
+    onProgress('Lade K-Pop-Tourkalender (Radio:Active) …');
+    let lastErr;
+    for (const url of RTC_SOURCES) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        list = parseRtc((await res.json()).content?.rendered || '');
+        if (list.length) break;
+      } catch (e) { lastErr = e; }
+    }
+    if (!list?.length) throw lastErr || new Error('keine Termine');
+    store.set('kpop.rtcConc', { v: 1, at: Date.now(), list });
+  }
+  // Nur K-Pop: der Kalender enthält auch z. B. koreanischen Hip-Hop oder Bands
+  await getKnownNames();
+  const groupSet = new Set(knownGroupNames.flatMap(nameVariants));
+  const relNames = new Set(releases.filter(r => !r.src).flatMap(r => r.names));
+  const out = [];
+  // Als „kein K-Pop“ eingestuft (z. B. Rock-Band „Catch The Young“) → auch bei Konzerten raus
+  const notKpop = new Set(Object.entries(mbGenre).filter(([, v]) => !v.ok).flatMap(([n]) => nameVariants(n)));
+  for (const cn of list) {
+    if (cn.tribute) { out.push(cn); continue; }
+    let ok = false;
+    for (const a of cn.artists) {
+      const v = nameVariants(a);
+      if (v.some(n => mine.has(n) || relNames.has(n))) { ok = true; break; }               // eigene Gruppen / im K-Pop-Kalender
+      if (v.some(n => notKpop.has(n))) continue;
+      if (v.some(n => groupSet.has(n))) { ok = true; break; }                            // bekannte K-Pop-Gruppe
+      try { if (await mbIsKpop(a)) { ok = true; break; } } catch (e) { console.warn('MusicBrainz', a, e.message); }
+    }
+    if (ok) out.push(cn);
+  }
+  return out;
+}
+
+// 4) Ticketmaster (optional)
 async function tm(params, tries = 3) {
   const wait = tmLast + 250 - Date.now();           // max. 5 Anfragen/Sekunde
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
@@ -1558,6 +1643,16 @@ async function loadConcerts() {
     renderConcerts(found);
   } catch (e) { errors.push('KPOP OFFICIAL nicht erreichbar'); console.warn(e); }
   try {
+    for (const c of await rtcConcerts(t => $('cstatus').textContent = t)) {
+      const k = key(c), same = found.get(k);
+      if (same) {   // gleicher Termin: fehlende Infos ergänzen
+        same.url ||= c.url; same.venue ||= c.venue; same.ticketState ||= c.ticketState;
+        if (c.status === 'cancelled') same.status = 'cancelled';
+      } else found.set(k, c);
+    }
+    renderConcerts(found);
+  } catch (e) { errors.push('K-Pop-Tourkalender nicht erreichbar'); console.warn(e); }
+  try {
     for (const c of await wikiConcerts(t => $('cstatus').textContent = t)) {
       const k = key(c), same = found.get(k);
       if (same) { same.wiki ||= c.info; if (c.status === 'cancelled') same.status = 'cancelled'; }   // gleicher Termin: Infos ergänzen
@@ -1581,25 +1676,31 @@ async function loadConcerts() {
   if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err',
     textContent: '⚠️ ' + errors.join(' · ') + ' – Termine von dort fehlen gerade. Später „Aktualisieren“ tippen.' }));
   if (errors.some(e => /Key/.test(e))) $('keyDetails').open = true;
-  store.set('kpop.ccache', { v: 4, at: Date.now(), list: [...found.values()] });
+  store.set('kpop.ccache', { v: 5, at: Date.now(), list: [...found.values()] });
   $('creload').disabled = false;
 }
 
 // Optionale Konzert-Filter (Standard: alles anzeigen)
-let cfilter = { city: '', mine: false, noTribute: false };
+let cfilter = { city: '', mine: false, noTribute: false, onlyConcerts: false };
 function renderConcertFilters() {
   const box = $('cfilters'); box.innerHTML = '';
   const cities = [...new Set(concerts.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
   const row = box.appendChild(Object.assign(document.createElement('div'), { className: 'frow' }));
   row.appendChild(Object.assign(document.createElement('b'), { textContent: 'Filter (optional)' }));
-  for (const [val, text] of [['', 'Alle Städte'], ...cities.map(c => [c, c])]) {
-    const b = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: text }));
-    b.setAttribute('aria-pressed', cfilter.city === val);
-    b.onclick = () => { cfilter.city = val; renderConcerts(); };
-  }
+  // Stadt als Auswahlliste (mit Tribute-Shows über 100 Städte)
+  const sel = row.appendChild(document.createElement('select'));
+  sel.className = 'chip'; sel.setAttribute('aria-label', 'Stadt');
+  for (const [val, text] of [['', `Alle Städte (${cities.length})`], ...cities.map(c => [c, `${c} (${concerts.filter(x => x.city === c).length})`])])
+    sel.appendChild(Object.assign(document.createElement('option'), { value: val, textContent: text, selected: cfilter.city === val }));
+  sel.onchange = () => { cfilter.city = sel.value; renderConcerts(); };
   const m = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '★ Nur meine Gruppen' }));
   m.setAttribute('aria-pressed', cfilter.mine);
   m.onclick = () => { cfilter.mine = !cfilter.mine; renderConcerts(); };
+  if (concerts.some(c => RTC_TYPES[c.kind])) {
+    const k = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '🎤 Nur Konzerte', title: 'Ohne Fan-Events, Fan-Signings und Festivals' }));
+    k.setAttribute('aria-pressed', cfilter.onlyConcerts);
+    k.onclick = () => { cfilter.onlyConcerts = !cfilter.onlyConcerts; renderConcerts(); };
+  }
   if (concerts.some(c => c.tribute)) {
     const t = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '🎭 Tribute-Shows ausblenden' }));
     t.setAttribute('aria-pressed', cfilter.noTribute);
@@ -1617,7 +1718,7 @@ function renderConcerts(map) {
   if (cfilter.city && !concerts.some(c => c.city === cfilter.city)) cfilter.city = '';
   renderConcertFilters();
   const list = concerts.filter(c => (!q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q)) &&
-    (!cfilter.city || c.city === cfilter.city) && (!cfilter.mine || concertIsMine(c)) && !(cfilter.noTribute && c.tribute));
+    (!cfilter.city || c.city === cfilter.city) && (!cfilter.mine || concertIsMine(c)) && !(cfilter.noTribute && c.tribute) && !(cfilter.onlyConcerts && RTC_TYPES[c.kind]));
   const box = $('concerts'); box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<div class="empty">Keine angekündigten Konzerte gefunden.</div>'; return; }
   let month = '', grid;
@@ -1653,13 +1754,15 @@ function gigCard(c) {
   const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
   const link = (href, t) => { const a = Object.assign(document.createElement('a'), { href, target: '_blank', rel: 'noopener', className: 'badge', textContent: t }); meta.appendChild(a); };
   if (c.tribute) badge('🎭 Tribute-Show (keine Original-Künstler)', 'plain');
+  if (RTC_TYPES[c.kind]) badge(RTC_TYPES[c.kind], 'plain');
   if (c.time) badge(`${c.time} Uhr`);
   badge(relDays(c.date), 'soon');
   if (STATUS[c.status]) badge(...STATUS[c.status]);
+  else if (RTC_TICKETS[c.ticketState]) badge(RTC_TICKETS[c.ticketState], 'warn');
   else if (c.onsale && new Date(c.onsale) > new Date())
     badge(`VVK ab ${new Date(c.onsale).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}`, 'warn');
   if (c.url) link(c.url, 'Tickets ↗');
-  if (c.info) link(c.info, c.src === 'wiki' ? 'Wikipedia ↗' : c.url ? 'Infos ↗' : 'Infos & Tickets ↗');
+  if (c.info) link(c.info, c.src === 'wiki' ? 'Wikipedia ↗' : c.src === 'rtc' ? 'K-Pop-Kalender ↗' : c.url ? 'Infos ↗' : 'Infos & Tickets ↗');
   if (c.wiki && c.wiki !== c.info) link(c.wiki, 'Wikipedia ↗');
   return el;
 }
@@ -1682,7 +1785,7 @@ function showTab(name) {
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
     const cc = store.get('kpop.ccache', null);
-    if (cc?.v === 4 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
+    if (cc?.v === 5 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
     loadConcerts();
   }
 }

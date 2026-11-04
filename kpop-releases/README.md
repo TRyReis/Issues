@@ -34,8 +34,11 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
 
 ## Konzerte in Deutschland (Tab „Konzerte“)
 - Alle angekündigten K-Pop-Konzerte in Deutschland ab heute, nach Monat gruppiert
-- Optionale Filter nach Stadt und „Nur meine Gruppen“ (Standard: alles)
-- Ohne Key: Tourdaten von KPOP OFFICIAL und von Wikipedia (Tourseiten großer K-Pop-Tourneen, z. B. aespa,
+- Optionale Filter: Stadt (Auswahlliste), „Nur meine Gruppen“, „Nur Konzerte“ (ohne Fan-Events/Festivals),
+  Tribute-Shows ausblenden (Standard: alles)
+- Nur K-Pop-Künstler (gleiche Prüfung wie bei den Releases); doppelte Termine aus mehreren Quellen werden zusammengeführt
+- Ohne Key: K-Pop-Tourkalender von Radio:Active / KPOP IN GERMANY (alle Deutschland-Termine inkl. kleinerer
+  Konzerte, Ticketstatus und Ticket-Link), KPOP OFFICIAL und Wikipedia (Tourseiten großer K-Pop-Tourneen, z. B. aespa,
   TWICE, BTS, LE SSERAFIM; abgesagte Termine werden markiert, Tribute-Shows gekennzeichnet und optional ausblendbar)
 - Datum, Uhrzeit, Stadt, Halle, Status (abgesagt/verschoben), Vorverkaufsstart und Ticket-Link
 - Optional zusätzlich Ticketmaster (findet auch kleinere Konzerte): Suche nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
