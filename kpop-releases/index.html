@@ -1499,7 +1499,8 @@ const RTC_SOURCES = [
   'https://radioactive-mag.com/wp-json/wp/v2/pages/110170?_fields=content'
 ];
 const RTC_TYPES = { festival: 'Festival', fansign: 'Fan-Signing', convention: 'Convention', 'fan-event': 'Fan-Event', fanmeeting: 'Fanmeeting', showcase: 'Showcase' };
-const RTC_TICKETS = { soldout: 'Ausverkauft', low: 'Nur noch wenige Tickets', soon: 'Vorverkauf bald' };
+// Hinweis: Den Ticketstatus des Kalenders („Vorverkauf bald“ …) zeigen wir NICHT an – er wird dort beim Eintragen
+// gesetzt und nicht aktualisiert (z. B. ONEUS: „Vorverkauf bald“, obwohl Tickets längst verkauft werden).
 
 function parseRtc(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -1526,7 +1527,7 @@ function parseRtc(html) {
         name: sub && norm(sub) !== norm(title) ? `${title} – ${sub}` : title,
         artists: tribute ? [] : title.split(/\s*,\s*|\s+[x×]\s+|\s*&\s*(?=[A-Z])/).filter(Boolean),
         date, end: null, time: '', city: cityDE(lines[0]), venue: /^tba$/i.test(venue) ? '' : venue,
-        status: card.dataset.event === 'cancelled' ? 'cancelled' : '', ticketState: card.dataset.ticket || '',
+        status: card.dataset.event === 'cancelled' ? 'cancelled' : '',
         kind: card.dataset.type || 'concert', tribute,
         url: ticketLink && !/kpopingermany\.com|radioactive-mag\.com/.test(ticketLink) ? ticketLink : '',
         info: 'https://kpopingermany.com/k-pop-events-in-deutschland/', onsale: ''
@@ -1538,7 +1539,7 @@ function parseRtc(html) {
 
 async function rtcConcerts(onProgress) {
   const c = store.get('kpop.rtcConc', null);
-  let list = c?.v === 1 && Date.now() - c.at < 6 * 36e5 ? c.list.map(x => ({ ...x, date: new Date(x.date) })) : null;
+  let list = c?.v === 2 && Date.now() - c.at < 6 * 36e5 ? c.list.map(x => ({ ...x, date: new Date(x.date) })) : null;
   if (!list) {
     onProgress('Lade K-Pop-Tourkalender (Radio:Active) …');
     let lastErr;
@@ -1551,7 +1552,7 @@ async function rtcConcerts(onProgress) {
       } catch (e) { lastErr = e; }
     }
     if (!list?.length) throw lastErr || new Error('keine Termine');
-    store.set('kpop.rtcConc', { v: 1, at: Date.now(), list });
+    store.set('kpop.rtcConc', { v: 2, at: Date.now(), list });
   }
   // Nur K-Pop: der Kalender enthält auch z. B. koreanischen Hip-Hop oder Bands
   await getKnownNames();
@@ -1646,7 +1647,7 @@ async function loadConcerts() {
     for (const c of await rtcConcerts(t => $('cstatus').textContent = t)) {
       const k = key(c), same = found.get(k);
       if (same) {   // gleicher Termin: fehlende Infos ergänzen
-        same.url ||= c.url; same.venue ||= c.venue; same.ticketState ||= c.ticketState;
+        same.url ||= c.url; same.venue ||= c.venue;
         if (c.status === 'cancelled') same.status = 'cancelled';
       } else found.set(k, c);
     }
@@ -1664,9 +1665,10 @@ async function loadConcerts() {
     try {
       for (const c of await tmConcerts(t => $('cstatus').textContent = t)) {
         const k = key(c), same = found.get(k);
-        if (same && !same.url) {   // gleicher Termin (Kalender/Wikipedia) → Ticket-Link übernehmen
-          Object.assign(same, { url: c.url, time: same.time || c.time, status: c.status, onsale: c.onsale, venue: same.venue || c.venue });
-        } else if (!same) found.set(k + '|' + c.id, c);
+        if (same) {   // gleicher Termin aus anderer Quelle: Ticketmaster-Status (live, offiziell) hat Vorrang
+          Object.assign(same, { url: same.url || c.url, time: same.time || c.time, venue: same.venue || c.venue,
+            status: c.status || same.status, onsale: c.onsale || same.onsale, tm: true });
+        } else found.set(k + '|' + c.id, { ...c, tm: true });
       }
     } catch (e) { errors.push(e.message); }
   }
@@ -1676,7 +1678,7 @@ async function loadConcerts() {
   if (errors.length) $('cstatus').append(Object.assign(document.createElement('div'), { className: 'err',
     textContent: '⚠️ ' + errors.join(' · ') + ' – Termine von dort fehlen gerade. Später „Aktualisieren“ tippen.' }));
   if (errors.some(e => /Key/.test(e))) $('keyDetails').open = true;
-  store.set('kpop.ccache', { v: 5, at: Date.now(), list: [...found.values()] });
+  store.set('kpop.ccache', { v: 6, at: Date.now(), list: [...found.values()] });
   $('creload').disabled = false;
 }
 
@@ -1733,7 +1735,9 @@ function renderConcerts(map) {
   }
 }
 
-const STATUS = { cancelled: ['Abgesagt', 'warn'], postponed: ['Verschoben', 'warn'], rescheduled: ['Neuer Termin', 'warn'], offsale: ['Kein Verkauf', 'warn'] };
+// Ticketmaster schreibt „canceled“ (ein L), Wikipedia/Kalender „cancelled“ → beides erkennen
+const STATUS = { cancelled: ['Abgesagt', 'warn'], canceled: ['Abgesagt', 'warn'], postponed: ['Verschoben', 'warn'],
+  rescheduled: ['Neuer Termin', 'warn'], offsale: ['Derzeit kein Verkauf (Ticketmaster)', 'warn'] };
 
 function gigCard(c) {
   const el = document.createElement('div'); el.className = 'card gig';
@@ -1757,11 +1761,16 @@ function gigCard(c) {
   if (RTC_TYPES[c.kind]) badge(RTC_TYPES[c.kind], 'plain');
   if (c.time) badge(`${c.time} Uhr`);
   badge(relDays(c.date), 'soon');
-  if (STATUS[c.status]) badge(...STATUS[c.status]);
-  else if (RTC_TICKETS[c.ticketState]) badge(RTC_TICKETS[c.ticketState], 'warn');
-  else if (c.onsale && new Date(c.onsale) > new Date())
-    badge(`VVK ab ${new Date(c.onsale).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}`, 'warn');
+  const saleLater = c.onsale && new Date(c.onsale) > new Date();
+  if (STATUS[c.status] && !(c.status === 'offsale' && saleLater)) badge(...STATUS[c.status]);
+  // Vorverkaufsbeginn nur aus Ticketmaster (offiziell, live) – nicht aus dem Tourkalender
+  if (saleLater && !/cancel/.test(c.status))
+    badge(`Vorverkauf ab ${new Date(c.onsale).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' })}`, 'warn');
   if (c.url) link(c.url, 'Tickets ↗');
+  else if (!/cancel/.test(c.status)) {
+    const who = c.tribute ? 'K-POP LIVE' : (c.artists[0] || c.name.split(' – ')[0]);
+    link('https://www.google.com/search?q=' + encodeURIComponent(`${who} ${c.city} ${c.date.toLocaleDateString('de-DE')} Tickets`), '🔎 Tickets suchen');
+  }
   if (c.info) link(c.info, c.src === 'wiki' ? 'Wikipedia ↗' : c.src === 'rtc' ? 'K-Pop-Kalender ↗' : c.url ? 'Infos ↗' : 'Infos & Tickets ↗');
   if (c.wiki && c.wiki !== c.info) link(c.wiki, 'Wikipedia ↗');
   return el;
@@ -1785,7 +1794,7 @@ function showTab(name) {
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
     const cc = store.get('kpop.ccache', null);
-    if (cc?.v === 5 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
+    if (cc?.v === 6 && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(revive(cc.list).map(c => [c.id, c])));
     loadConcerts();
   }
 }

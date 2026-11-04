@@ -38,7 +38,10 @@ und kürzlich erschienene K-Pop-Releases anzeigt – bis maximal 30 Tage zurück
   Tribute-Shows ausblenden (Standard: alles)
 - Nur K-Pop-Künstler (gleiche Prüfung wie bei den Releases); doppelte Termine aus mehreren Quellen werden zusammengeführt
 - Ohne Key: K-Pop-Tourkalender von Radio:Active / KPOP IN GERMANY (alle Deutschland-Termine inkl. kleinerer
-  Konzerte, Ticketstatus und Ticket-Link), KPOP OFFICIAL und Wikipedia (Tourseiten großer K-Pop-Tourneen, z. B. aespa,
+  Konzerte und Ticket-Link), KPOP OFFICIAL und Wikipedia
+- Ticketstatus (Vorverkaufsbeginn, abgesagt, verschoben) nur aus Ticketmaster (live, offiziell). Der Ticketstatus
+  des Tourkalenders wird nicht angezeigt, weil er dort nicht aktualisiert wird. Ohne direkten Ticket-Link gibt es
+  „🔎 Tickets suchen“ (Suche nach Künstler, Stadt und Datum) (Tourseiten großer K-Pop-Tourneen, z. B. aespa,
   TWICE, BTS, LE SSERAFIM; abgesagte Termine werden markiert, Tribute-Shows gekennzeichnet und optional ausblendbar)
 - Datum, Uhrzeit, Stadt, Halle, Status (abgesagt/verschoben), Vorverkaufsstart und Ticket-Link
 - Optional zusätzlich Ticketmaster (findet auch kleinere Konzerte): Suche nach „K-Pop“ und nach jeder Gruppe aus „Meine Gruppen“
