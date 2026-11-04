@@ -462,7 +462,7 @@ function checkGroups() {
     }
     if (best > Math.max(2, Math.floor(n.length / 3))) tip = '';
     box.appendChild(Object.assign(document.createElement('div'), { className: 'err',
-      textContent: `⚠️ „${g}“ unbekannt` + (tip ? ` – meintest du „${tip}“?` : ' – Schreibweise prüfen.') }));
+      textContent: `⚠️ Keine Einträge zu „${g}“` + (tip ? ` – meintest du „${tip}“?` : ' – Schreibweise prüfen (oder bisher keine Releases).') }));
   }
 }
 
