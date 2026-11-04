@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K-Pop Release Radar</title>
+<style>
+  :root {
+    --bg: #faf8fc; --card: #ffffff; --text: #1d1a24; --muted: #6b6578;
+    --line: #e7e2ef; --accent: #c2185b; --accent-soft: #fce4ef; --soon: #0b7a5a; --soon-soft: #dff5ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141218; --card: #1e1b24; --text: #f2eff7; --muted: #a59fb3;
+      --line: #2f2a38; --accent: #f06292; --accent-soft: #3a1f2c; --soon: #4cd3a5; --soon-soft: #15342a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 24px 16px 8px; max-width: 980px; margin: 0 auto; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 4px 0 0; }
+  main { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+  input[type=search], textarea {
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 12px; font: inherit; }
+  input[type=search] { flex: 1 1 220px; min-width: 0; }
+  button, .chip {
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 14px; font: inherit; cursor: pointer; }
+  .chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  h2 { font-size: 18px; margin: 28px 0 10px; display: flex; gap: 8px; align-items: baseline; }
+  h2 .count { color: var(--muted); font-weight: 400; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+          display: flex; gap: 12px; padding: 10px; cursor: pointer; text-align: left; }
+  .card:hover { border-color: var(--accent); }
+  .cover { width: 76px; height: 76px; border-radius: 10px; flex: none; object-fit: cover;
+           background: var(--accent-soft); display: grid; place-items: center; font-size: 26px; }
+  .info { min-width: 0; flex: 1; }
+  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .artist { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 12px; }
+  .badge { border-radius: 6px; padding: 2px 7px; background: var(--accent-soft); color: var(--accent); }
+  .badge.soon { background: var(--soon-soft); color: var(--soon); }
+  .tracks { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+  .empty, .status { color: var(--muted); padding: 12px 0; }
+  .err { color: var(--accent); }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; }
+  summary { cursor: pointer; font-weight: 600; }
+  textarea { width: 100%; min-height: 120px; margin: 10px 0; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 32px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎤 K-Pop Release Radar</h1>
+  <p class="sub" id="range"></p>
+</header>
+<main>
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Gruppe oder Titel filtern …" aria-label="Filter">
+    <span id="types"></span>
+    <button id="reload" class="primary">↻ Aktualisieren</button>
+  </div>
+
+  <details>
+    <summary>Meine Gruppen (<span id="groupCount">0</span>)</summary>
+    <p class="sub">Eine Gruppe pro Zeile. Zusätzlich werden alle Releases mit dem MusicBrainz-Tag „k-pop“ geladen.</p>
+    <textarea id="groups" spellcheck="false"></textarea>
+    <button id="saveGroups" class="primary">Speichern &amp; neu laden</button>
+    <button id="resetGroups">Standardliste</button>
+  </details>
+
+  <div class="status" id="status"></div>
+
+  <section>
+    <h2>📅 Demnächst <span class="count" id="upCount"></span></h2>
+    <div class="grid" id="upcoming"></div>
+  </section>
+  <section>
+    <h2>🆕 Neu erschienen – letzte 30 Tage <span class="count" id="recentCount"></span></h2>
+    <div class="grid" id="recent"></div>
+  </section>
+
+  <footer>
+    Daten: <a href="https://musicbrainz.org" target="_blank" rel="noopener">MusicBrainz</a> (Community-Datenbank),
+    Cover: <a href="https://coverartarchive.org" target="_blank" rel="noopener">Cover Art Archive</a>.
+    Angekündigte Releases erscheinen hier nur, wenn sie bereits in MusicBrainz eingetragen sind.
+    Karte antippen für die Tracklist.
+  </footer>
+</main>
+
+<script>
+const MB = 'https://musicbrainz.org/ws/2';
+const DAYS_BACK = 30;      // max. 1 Monat zurück
+const DAYS_AHEAD = 120;    // wie weit in die Zukunft
+const DEFAULT_GROUPS = [
+  'BTS','BLACKPINK','TWICE','Stray Kids','SEVENTEEN','aespa','NewJeans','IVE','LE SSERAFIM',
+  'ENHYPEN','TOMORROW X TOGETHER','ITZY','(G)I-DLE','NCT 127','NCT DREAM','ATEEZ','BABYMONSTER',
+  'ILLIT','RIIZE','ZEROBASEONE','KISS OF LIFE','NMIXX','TWS','BOYNEXTDOOR','Red Velvet','MONSTA X',
+  'THE BOYZ','fromis_9','STAYC','Kep1er','xikers','P1Harmony','KATSEYE','MEOVV','izna','KickFlip'
+];
+const TYPES = ['Alle', 'Album', 'EP', 'Single'];
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const iso = d => d.toISOString().slice(0, 10);
+const from = addDays(today, -DAYS_BACK), to = addDays(today, DAYS_AHEAD);
+const fmt = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+
+let groups = store.get('kpop.groups', DEFAULT_GROUPS);
+let typeFilter = store.get('kpop.type', 'Alle');
+let releases = [];
+
+$('range').textContent = `Releases vom ${fmt.format(from)} bis ${fmt.format(to)}`;
+
+// --- MusicBrainz (max. 1 Anfrage pro Sekunde) ---
+let lastCall = 0;
+async function mb(path) {
+  const wait = lastCall + 1100 - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastCall = Date.now();
+  const res = await fetch(`${MB}/${path}${path.includes('?') ? '&' : '?'}fmt=json`, { headers: { Accept: 'application/json' } });
+  if (res.status === 503) { await new Promise(r => setTimeout(r, 2000)); return mb(path); }
+  if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
+  return res.json();
+}
+
+const esc = s => s.replace(/(["\\])/g, '\\$1');
+const dateRange = `firstreleasedate:[${iso(from)} TO ${iso(to)}]`;
+
+async function searchRG(query) {
+  const out = [];
+  for (let offset = 0; offset < 300; offset += 100) {
+    const data = await mb(`release-group?query=${encodeURIComponent(query)}&limit=100&offset=${offset}`);
+    out.push(...(data['release-groups'] || []));
+    if (offset + 100 >= (data.count || 0)) break;
+  }
+  return out;
+}
+
+function normalise(rg) {
+  const d = rg['first-release-date'] || '';
+  const full = d.length === 10 ? d : d.length === 7 ? d + '-01' : null; // "2026-11" → Monatsanfang
+  if (!full) return null;
+  const date = new Date(full + 'T00:00:00');
+  if (date < from || date > to) return null;
+  const secondary = rg['secondary-types'] || [];
+  if (secondary.some(t => ['Live', 'Compilation', 'DJ-mix', 'Mixtape/Street', 'Interview'].includes(t))) return null;
+  return {
+    id: rg.id,
+    title: rg.title,
+    artist: (rg['artist-credit'] || []).map(a => (a.name || a.artist?.name) + (a.joinphrase || '')).join('') || 'Unbekannt',
+    type: rg['primary-type'] || 'Sonstiges',
+    secondary,
+    date, partial: d.length === 7
+  };
+}
+
+async function load() {
+  $('status').innerHTML = 'Lade Releases von MusicBrainz …';
+  $('reload').disabled = true;
+  const found = new Map();
+  const add = list => list.map(normalise).filter(Boolean).forEach(r => found.set(r.id, r));
+  try {
+    add(await searchRG(`(tag:k-pop OR tag:kpop) AND ${dateRange}`));
+    render(found);
+    for (let i = 0; i < groups.length; i += 8) {
+      const chunk = groups.slice(i, i + 8);
+      $('status').textContent = `Lade Gruppen ${i + 1}–${i + chunk.length} von ${groups.length} …`;
+      const artists = chunk.map(g => `artist:"${esc(g)}"`).join(' OR ');
+      add(await searchRG(`(${artists}) AND ${dateRange}`));
+      render(found);
+    }
+    $('status').textContent = `${found.size} Releases gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}`;
+    store.set('kpop.cache', { at: Date.now(), list: [...found.values()] });
+  } catch (e) {
+    $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Später erneut versuchen.</span>`;
+  } finally {
+    $('reload').disabled = false;
+  }
+}
+
+// --- Darstellung ---
+function render(map) {
+  releases = [...map.values()];
+  const q = $('q').value.trim().toLowerCase();
+  const list = releases.filter(r =>
+    (typeFilter === 'Alle' || r.type === typeFilter) &&
+    (!q || r.title.toLowerCase().includes(q) || r.artist.toLowerCase().includes(q)));
+  const up = list.filter(r => r.date > today).sort((a, b) => a.date - b.date);
+  const recent = list.filter(r => r.date <= today).sort((a, b) => b.date - a.date);
+  fill('upcoming', up, 'Keine angekündigten Releases gefunden.');
+  fill('recent', recent, 'Keine Releases in den letzten 30 Tagen gefunden.');
+  $('upCount').textContent = up.length;
+  $('recentCount').textContent = recent.length;
+}
+
+function fill(id, list, emptyMsg) {
+  const el = $(id);
+  el.innerHTML = '';
+  if (!list.length) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  for (const r of list) el.appendChild(card(r));
+}
+
+function relDays(d) {
+  const n = Math.round((d - today) / 864e5);
+  if (n === 0) return 'heute';
+  if (n === 1) return 'morgen';
+  if (n === -1) return 'gestern';
+  return n > 0 ? `in ${n} Tagen` : `vor ${-n} Tagen`;
+}
+
+function card(r) {
+  const el = document.createElement('div');
+  el.className = 'card'; el.tabIndex = 0;
+  const upcoming = r.date > today;
+  const dateTxt = r.partial
+    ? r.date.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+    : fmt.format(r.date);
+  el.innerHTML = `
+    <img class="cover" alt="" loading="lazy" src="https://coverartarchive.org/release-group/${r.id}/front-250">
+    <div class="info">
+      <div class="title"></div>
+      <div class="artist"></div>
+      <div class="meta">
+        <span class="badge">${r.type}</span>
+        <span class="badge ${upcoming ? 'soon' : ''}">${dateTxt}${r.partial ? '' : ' · ' + relDays(r.date)}</span>
+      </div>
+      <div class="more"></div>
+    </div>`;
+  el.querySelector('.title').textContent = r.title;
+  el.querySelector('.title').title = r.title;
+  el.querySelector('.artist').textContent = r.artist;
+  const img = el.querySelector('img');
+  img.onerror = () => { const ph = document.createElement('div'); ph.className = 'cover'; ph.textContent = '💿'; img.replaceWith(ph); };
+  const toggle = () => showTracks(r, el.querySelector('.more'));
+  el.onclick = toggle;
+  el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
+  return el;
+}
+
+async function showTracks(r, box) {
+  if (box.dataset.open) { box.innerHTML = ''; delete box.dataset.open; return; }
+  box.dataset.open = '1';
+  box.innerHTML = '<div class="tracks">Lade Tracklist …</div>';
+  try {
+    const data = await mb(`release?release-group=${r.id}&inc=recordings&limit=1`);
+    const tracks = (data.releases?.[0]?.media || []).flatMap(m => m.tracks || []);
+    if (!tracks.length) { box.innerHTML = '<div class="tracks">Noch keine Tracklist eingetragen.</div>'; return; }
+    const ol = document.createElement('ol'); ol.className = 'tracks';
+    tracks.forEach(t => { const li = document.createElement('li'); li.textContent = t.title; ol.appendChild(li); });
+    box.innerHTML = ''; box.appendChild(ol);
+    const a = document.createElement('a');
+    a.href = `https://musicbrainz.org/release-group/${r.id}`; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'Auf MusicBrainz ansehen'; a.onclick = e => e.stopPropagation();
+    a.style.fontSize = '12px'; box.appendChild(a);
+  } catch (e) {
+    box.innerHTML = `<div class="tracks err">Tracklist konnte nicht geladen werden.</div>`;
+  }
+}
+
+// --- UI-Verdrahtung ---
+function renderTypes() {
+  $('types').innerHTML = '';
+  for (const t of TYPES) {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.textContent = t; b.setAttribute('aria-pressed', t === typeFilter);
+    b.onclick = () => { typeFilter = t; store.set('kpop.type', t); renderTypes(); render(new Map(releases.map(r => [r.id, r]))); };
+    $('types').appendChild(b);
+  }
+}
+function showGroups() { $('groups').value = groups.join('\n'); $('groupCount').textContent = groups.length; }
+
+$('q').oninput = () => render(new Map(releases.map(r => [r.id, r])));
+$('reload').onclick = load;
+$('saveGroups').onclick = () => {
+  groups = [...new Set($('groups').value.split('\n').map(s => s.trim()).filter(Boolean))];
+  store.set('kpop.groups', groups); showGroups(); load();
+};
+$('resetGroups').onclick = () => { groups = [...DEFAULT_GROUPS]; store.set('kpop.groups', groups); showGroups(); };
+
+renderTypes(); showGroups();
+// Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
+const cache = store.get('kpop.cache', null);
+if (cache && Date.now() - cache.at < 6 * 36e5) {
+  render(new Map(cache.list.map(r => [r.id, { ...r, date: new Date(r.date) }])));
+  $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
+}
+load();
+</script>
+</body>
+</html>
