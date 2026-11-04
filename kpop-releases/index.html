@@ -1324,24 +1324,51 @@ async function wiki(params, tries = 3) {
   }
 }
 
-// Touren eines Jahres, deren Seite „Germany“ enthält, mit ihren „<Künstler> concert tours“-Kategorien
-// (Wikipedia-Suche statt kompletter Kategorielisten: 1–2 Anfragen statt 10+)
-async function wikiTourList(year) {
-  const tours = new Map();
+// Tourseiten eines Jahres, die „Germany“ UND „South Korean“ oder „K-pop“ enthalten.
+// (Viele neue Tourseiten – z. B. aespa „Synk: Complæxity“ – haben keine Künstler-Kategorie, daher Volltextsuche.)
+async function wikiTourTitles(year) {
+  const titles = [];
   let cont = {};
-  for (let i = 0; i < 20; i++) {
-    const d = await wiki({ action: 'query', generator: 'search', gsrsearch: `incategory:"${year} concert tours" insource:"Germany"`,
-      gsrlimit: '200', gsrnamespace: '0', prop: 'categories', cllimit: 'max', clshow: '!hidden', ...cont });
-    for (const p of d.query?.pages || []) {
-      const arts = (p.categories || []).map(c => c.title.match(/^Category:(.+) concert tours$/)?.[1])
-        .filter(a => a && !/^\d{4}/.test(a));
-      if (!tours.has(p.title)) tours.set(p.title, new Set());
-      arts.forEach(a => tours.get(p.title).add(a));
-    }
+  for (let i = 0; i < 10; i++) {
+    const d = await wiki({ action: 'query', list: 'search', srsearch: `incategory:"${year} concert tours" insource:"Germany" ("South Korean" OR "K-pop")`,
+      srlimit: '100', srnamespace: '0', srprop: '', ...cont });
+    titles.push(...(d.query?.search || []).map(p => p.title));
     if (!d.continue) break;
-    cont = d.continue;   // weitere Kategorien bzw. Treffer
+    cont = d.continue;
   }
-  return tours;
+  return titles;
+}
+
+// Einleitungstexte („… is the third concert tour by South Korean girl group Aespa …“)
+async function wikiIntros(titles) {
+  const out = new Map();
+  for (const c of chunks(titles, 20)) {
+    const d = await wiki({ action: 'query', prop: 'extracts', exintro: '1', explaintext: '1', exlimit: '20', titles: c.join('|'), redirects: '1' });
+    const back = new Map((d.query?.redirects || []).map(r => [r.to, r.from]));
+    for (const p of d.query?.pages || []) out.set(back.get(p.title) || p.title, p.extract || '');
+  }
+  return out;
+}
+
+// Künstler aus dem Einleitungstext: bekannter K-Pop-Name, der nach „by“ zuerst vorkommt
+function wikiArtist(intro, display) {
+  const head = intro.slice(0, 400);
+  if (!/south korean|k-pop/i.test(head)) return null;
+  if (/\btribute\b/i.test(head)) return { name: 'K-Pop Tribute-Show', tribute: true };
+  const by = head.search(/\bby\b/i);
+  let best = null;
+  for (const [variant, name] of display) {
+    if (variant.length < 3) continue;
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu');
+    const m = head.match(re);
+    if (!m) continue;
+    const pos = m.index + m[1].length;
+    const score = (by >= 0 && pos > by ? 0 : 1000) + pos;   // nach „by“ bevorzugt, dann früheste Stelle
+    if (!best || score < best.score) best = { name, score };
+  }
+  if (best) return { name: best.name };
+  const m = head.match(/\bby (?:the )?South Korean [^.]*?\b(?:group|band|boy band|girl group|singer|rapper|duo|unit|soloist|artist)\s+([A-Z0-9][^,.;(]{1,40}?)(?=[,.;(]| and | as | in | which | to )/);
+  return m ? { name: m[1].trim() } : null;
 }
 
 // Tabelle mit rowspan/colspan in ein Raster auflösen
@@ -1420,29 +1447,34 @@ function wikiGermanyRows(html, pageTitle, artist) {
 
 async function wikiConcerts(onProgress) {
   const c = store.get('kpop.wikiConc', null);
-  if (c?.v === 1 && Date.now() - c.at < 12 * 36e5) return c.list.map(x => ({ ...x, date: new Date(x.date), end: x.end ? new Date(x.end) : null }));
+  if (c?.v === 2 && Date.now() - c.at < 12 * 36e5) return c.list.map(x => ({ ...x, date: new Date(x.date), end: x.end ? new Date(x.end) : null }));
   await getKnownNames();
-  // Künstlername → Anzeige-Name aus der K-Pop-Datenbank (z. B. „Aespa“ → „aespa“)
+  // Bekannte K-Pop-Namen → Anzeige-Name (Gruppen, Solisten ohne Gruppenzusatz, „Meine Gruppen“)
   const display = new Map();
-  for (const n of knownGroupNames) for (const v of nameVariants(n)) display.set(v, cleanName(n).replace(/\s*\(.*\)\s*$/, ''));
-  for (const n of knownNames) { const m = cleanName(n).match(/^(.*?)\s*\((.*)\)\s*$/); if (m) display.has(norm(m[1])) || display.set(norm(m[1]), m[1]); else display.has(norm(n)) || display.set(norm(n), cleanName(n)); }
-  for (const g of groups) for (const v of nameVariants(g)) display.has(v) || display.set(v, g);
-  const y = today.getFullYear(), tours = new Map();
-  for (const year of [y, y + 1]) {
-    onProgress(`Wikipedia: Touren ${year} …`);
-    for (const [t, a] of await wikiTourList(year)) { if (!tours.has(t)) tours.set(t, new Set()); a.forEach(x => tours.get(t).add(x)); }
-  }
-  const kpopTours = [...tours].map(([t, arts]) => [t, [...arts].map(a => display.get(norm(a))).find(Boolean)]).filter(([, a]) => a);
+  const addName = n => { const clean = cleanName(n).replace(/\s*\(.*\)\s*$/, '').trim(); if (clean) display.has(norm(clean)) || display.set(norm(clean), clean); };
+  knownGroupNames.forEach(addName);
+  knownNames.forEach(addName);
+  groups.forEach(addName);
+  const y = today.getFullYear();
+  const titles = [];
+  for (const year of [y, y + 1]) { onProgress(`Wikipedia: Touren ${year} …`); titles.push(...await wikiTourTitles(year)); }
+  const unique = [...new Set(titles)].sort();
+  onProgress('Wikipedia: prüfe Künstler …');
+  const intros = await wikiIntros(unique);
+  const tours = unique.map(t => [t, wikiArtist(intros.get(t) || '', display)]).filter(([, a]) => a);
   const out = [];
   let done = 0;
-  await Promise.all(kpopTours.map(async ([title, artist]) => {
+  await Promise.all(tours.map(async ([title, artist]) => {
     try {
       const d = await wiki({ action: 'parse', page: title, prop: 'text', redirects: '1' });
-      out.push(...wikiGermanyRows(d.parse?.text || '', title, artist));
+      for (const row of wikiGermanyRows(d.parse?.text || '', title, artist.name)) {
+        if (artist.tribute) { row.name = `${title} (Tribute-Show)`; row.tribute = true; row.artists = []; }
+        out.push(row);
+      }
     } catch (e) { console.warn('Wikipedia', title, e.message); }
-    onProgress(`Wikipedia: K-Pop-Tourseiten ${++done}/${kpopTours.length} …`);
+    onProgress(`Wikipedia: Tourseiten ${++done}/${tours.length} …`);
   }));
-  store.set('kpop.wikiConc', { v: 1, at: Date.now(), list: out });
+  store.set('kpop.wikiConc', { v: 2, at: Date.now(), list: out });
   return out;
 }
 
@@ -1541,7 +1573,7 @@ async function loadConcerts() {
 }
 
 // Optionale Konzert-Filter (Standard: alles anzeigen)
-let cfilter = { city: '', mine: false };
+let cfilter = { city: '', mine: false, noTribute: false };
 function renderConcertFilters() {
   const box = $('cfilters'); box.innerHTML = '';
   const cities = [...new Set(concerts.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
@@ -1555,6 +1587,11 @@ function renderConcertFilters() {
   const m = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '★ Nur meine Gruppen' }));
   m.setAttribute('aria-pressed', cfilter.mine);
   m.onclick = () => { cfilter.mine = !cfilter.mine; renderConcerts(); };
+  if (concerts.some(c => c.tribute)) {
+    const t = row.appendChild(Object.assign(document.createElement('button'), { className: 'chip', textContent: '🎭 Tribute-Shows ausblenden' }));
+    t.setAttribute('aria-pressed', cfilter.noTribute);
+    t.onclick = () => { cfilter.noTribute = !cfilter.noTribute; renderConcerts(); };
+  }
 }
 const concertIsMine = c => {
   const text = norm([c.name, ...c.artists].join(' '));
@@ -1567,7 +1604,7 @@ function renderConcerts(map) {
   if (cfilter.city && !concerts.some(c => c.city === cfilter.city)) cfilter.city = '';
   renderConcertFilters();
   const list = concerts.filter(c => (!q || [c.name, c.city, c.venue, ...c.artists].join(' ').toLowerCase().includes(q)) &&
-    (!cfilter.city || c.city === cfilter.city) && (!cfilter.mine || concertIsMine(c)));
+    (!cfilter.city || c.city === cfilter.city) && (!cfilter.mine || concertIsMine(c)) && !(cfilter.noTribute && c.tribute));
   const box = $('concerts'); box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<div class="empty">Keine angekündigten Konzerte gefunden.</div>'; return; }
   let month = '', grid;
@@ -1602,6 +1639,7 @@ function gigCard(c) {
   const meta = el.querySelector('.meta');
   const badge = (t, cls = '') => meta.appendChild(Object.assign(document.createElement('span'), { className: 'badge ' + cls, textContent: t }));
   const link = (href, t) => { const a = Object.assign(document.createElement('a'), { href, target: '_blank', rel: 'noopener', className: 'badge', textContent: t }); meta.appendChild(a); };
+  if (c.tribute) badge('🎭 Tribute-Show (keine Original-Künstler)', 'plain');
   if (c.time) badge(`${c.time} Uhr`);
   badge(relDays(c.date), 'soon');
   if (STATUS[c.status]) badge(...STATUS[c.status]);
