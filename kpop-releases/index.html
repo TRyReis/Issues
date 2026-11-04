@@ -149,7 +149,7 @@ const DEFAULT_GROUPS = [
   'BTS','BLACKPINK','TWICE','Stray Kids','SEVENTEEN','aespa','NewJeans','IVE','LE SSERAFIM',
   'ENHYPEN','TOMORROW X TOGETHER','ITZY','(G)I-DLE','NCT 127','NCT DREAM','ATEEZ','BABYMONSTER',
   'ILLIT','RIIZE','ZEROBASEONE','KISS OF LIFE','NMIXX','TWS','BOYNEXTDOOR','Red Velvet','MONSTA X',
-  'THE BOYZ','fromis_9','STAYC','Kep1er','xikers','P1Harmony','KATSEYE','MEOVV','izna','KickFlip'
+  'THE BOYZ','fromis_9','STAYC','Kep1er','xikers','P1Harmony','MEOVV','izna','KickFlip'
 ];
 const TYPES = ['Alle', 'Album', 'EP', 'Single'];
 
@@ -196,6 +196,30 @@ async function searchRG(query) {
   return out;
 }
 
+// --- Strikte K-Pop-Prüfung ---
+// Achtung: In der MusicBrainz-Suche wird `tag:k-pop` am Bindestrich zerlegt und findet dann
+// auch alles mit dem Tag „pop“. Deshalb wird jedes Ergebnis zusätzlich hier geprüft.
+const norm = s => (s || '').toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]/gu, '');
+const KPOP_TAGS = new Set(['kpop', 'koreanpop', 'kpopidol', 'koreanidol']);
+const hasKpopTag = tags => (tags || []).some(t => KPOP_TAGS.has(norm(t.name)));
+const isKoreanArtist = a =>
+  a.country === 'KR' || norm(a.area?.name) === 'southkorea' || hasKpopTag(a.tags);
+
+// Gruppenname → MusicBrainz-Künstler-ID (nur wenn exakter Name/Alias UND koreanisch bzw. K-Pop)
+let artistIds = store.get('kpop.mbids', {});
+async function resolveGroup(name) {
+  const hit = artistIds[name];
+  if (hit && Date.now() - hit.at < 30 * 864e5) return hit;
+  const data = await mb(`artist?query=${encodeURIComponent(`artist:"${esc(name)}" OR alias:"${esc(name)}"`)}&limit=15`);
+  const want = norm(name);
+  const match = (data.artists || [])
+    .filter(a => (norm(a.name) === want || (a.aliases || []).some(al => norm(al.name) === want)) && isKoreanArtist(a))
+    .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  const res = { id: match?.id || null, name: match?.name || null, at: Date.now() };
+  artistIds[name] = res; store.set('kpop.mbids', artistIds);
+  return res;
+}
+
 function normalise(rg) {
   const d = rg['first-release-date'] || '';
   const full = d.length === 10 ? d : d.length === 7 ? d + '-01' : null; // "2026-11" → Monatsanfang
@@ -218,19 +242,34 @@ async function load() {
   $('status').innerHTML = 'Lade Releases von MusicBrainz …';
   $('reload').disabled = true;
   const found = new Map();
-  const add = list => list.map(normalise).filter(Boolean).forEach(r => found.set(r.id, r));
+  const add = (list, accept) => list.filter(accept).map(normalise).filter(Boolean).forEach(r => found.set(r.id, r));
+  const creditIds = rg => (rg['artist-credit'] || []).map(a => a.artist?.id).filter(Boolean);
   try {
-    add(await searchRG(`(tag:k-pop OR tag:kpop) AND ${dateRange}`));
-    render(found);
-    for (let i = 0; i < groups.length; i += 8) {
-      const chunk = groups.slice(i, i + 8);
-      $('status').textContent = `Lade Gruppen ${i + 1}–${i + chunk.length} von ${groups.length} …`;
-      const artists = chunk.map(g => `artist:"${esc(g)}"`).join(' OR ');
-      add(await searchRG(`(${artists}) AND ${dateRange}`));
+    // 1) Gruppen eindeutig zu MusicBrainz-IDs auflösen
+    const known = new Set(), missing = [];
+    for (let i = 0; i < groups.length; i++) {
+      if (!artistIds[groups[i]] || Date.now() - artistIds[groups[i]].at >= 30 * 864e5)
+        $('status').textContent = `Prüfe Gruppen ${i + 1}/${groups.length}: ${groups[i]} …`;
+      const r = await resolveGroup(groups[i]);
+      if (r.id) known.add(r.id); else missing.push(groups[i]);
+    }
+    // 2) Releases genau dieser Künstler (per ID, keine Namens-Ähnlichkeit)
+    const ids = [...known];
+    for (let i = 0; i < ids.length; i += 15) {
+      $('status').textContent = `Lade Releases (${Math.min(i + 15, ids.length)}/${ids.length} Gruppen) …`;
+      add(await searchRG(`arid:(${ids.slice(i, i + 15).join(' OR ')}) AND ${dateRange}`),
+          rg => creditIds(rg).some(id => known.has(id)));
       render(found);
     }
-    $('status').textContent = `${found.size} Releases gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}`;
-    store.set('kpop.cache', { at: Date.now(), list: [...found.values()] });
+    // 3) Weitere Releases, die selbst als K-Pop getaggt sind (Tag wird exakt geprüft)
+    $('status').textContent = 'Suche weitere K-Pop-Releases …';
+    add(await searchRG(`(tag:"k-pop" OR tag:kpop) AND ${dateRange}`),
+        rg => hasKpopTag(rg.tags) || creditIds(rg).some(id => known.has(id)));
+    render(found);
+
+    $('status').textContent = `${found.size} K-Pop-Releases gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}` +
+      (missing.length ? ` · Nicht als K-Pop-Gruppe gefunden: ${missing.join(', ')}` : '');
+    store.set('kpop.cache', { v: 2, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('status').innerHTML = `<span class="err">Fehler beim Laden: ${e.message}. Später erneut versuchen.</span>`;
   } finally {
@@ -358,6 +397,12 @@ async function tm(params) {
   return data._embedded?.events || [];
 }
 
+// Event zählt nur als K-Pop, wenn „K-Pop“ im Namen, bei einem Künstler oder im Genre steht
+function isKpopEvent(e) {
+  const texts = [e.name, ...(e._embedded?.attractions || []).map(a => a.name),
+    ...(e.classifications || []).flatMap(c => [c.genre?.name, c.subGenre?.name])];
+  return texts.some(t => /\bk[\s-]?pop\b/i.test(t || ''));
+}
 const wordRe = name => new RegExp(`(^|[^\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu');
 
 function toConcert(e, artistHint) {
@@ -387,24 +432,25 @@ async function loadConcerts() {
   const found = new Map();
   try {
     // 1) Allgemeine K-Pop-Suche
-    for (const params of [{ classificationName: 'K-Pop' }, { keyword: 'K-Pop' }, { keyword: 'KPOP' }]) {
+    for (const params of [{ keyword: 'K-Pop' }, { keyword: 'KPOP' }]) {
       $('cstatus').textContent = 'Suche K-Pop-Events …';
-      for (const e of await tm(params)) { const c = toConcert(e); if (c) found.set(c.id, c); }
+      for (const e of await tm(params)) { const c = toConcert(e); if (c && isKpopEvent(e)) found.set(c.id, c); }
       renderConcerts(found);
     }
     // 2) Jede Gruppe aus „Meine Gruppen“
     for (let i = 0; i < groups.length; i++) {
-      const g = groups[i], re = wordRe(g);
+      const g = groups[i], want = norm(g);
       $('cstatus').textContent = `Suche Konzerte: ${g} (${i + 1}/${groups.length}) …`;
       for (const e of await tm({ keyword: g, classificationName: 'Music' })) {
         const c = toConcert(e, g);
-        // nur echte Treffer (z. B. „IVE“ nicht in „Live“)
-        if (c && (c.artists.some(a => re.test(a)) || re.test(c.name))) found.set(c.id, c);
+        // nur exakte Künstler-Treffer (z. B. „TWICE“ nicht bei „Twice as Nice“)
+        if (c && (c.artists.some(a => norm(a) === want) || (wordRe(g).test(c.name) && isKpopEvent(e))))
+          found.set(c.id, c);
       }
       renderConcerts(found);
     }
     $('cstatus').textContent = `${found.size} Konzerte/Events in Deutschland gefunden · Stand ${new Date().toLocaleTimeString('de-DE')}`;
-    store.set('kpop.ccache', { at: Date.now(), list: [...found.values()] });
+    store.set('kpop.ccache', { v: 2, at: Date.now(), list: [...found.values()] });
   } catch (e) {
     $('cstatus').innerHTML = `<span class="err">Fehler: ${e.message}</span>`;
     if (/Key/.test(e.message)) $('keyDetails').open = true;
@@ -473,7 +519,7 @@ function showTab(name) {
   store.set('kpop.tab', name);
   if (name === 'concerts' && !concertsLoaded) {
     concertsLoaded = true;
-    const cc = store.get('kpop.ccache', null);
+    const cc = store.get('kpop.ccache', null)?.v === 2 ? store.get('kpop.ccache') : null;
     if (cc && Date.now() - cc.at < 6 * 36e5) renderConcerts(new Map(cc.list.map(c => [c.id, { ...c, date: new Date(c.date) }])));
     loadConcerts();
   }
@@ -483,7 +529,7 @@ showTab(store.get('kpop.tab', 'releases'));
 
 renderTypes(); showGroups();
 // Zwischengespeicherte Daten (max. 6 h alt) sofort anzeigen, dann frisch laden
-const cache = store.get('kpop.cache', null);
+const cache = store.get('kpop.cache', null)?.v === 2 ? store.get('kpop.cache') : null;
 if (cache && Date.now() - cache.at < 6 * 36e5) {
   render(new Map(cache.list.map(r => [r.id, { ...r, date: new Date(r.date) }])));
   $('status').textContent = 'Zwischengespeicherte Daten – aktualisiere …';
